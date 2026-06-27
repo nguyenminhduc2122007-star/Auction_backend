@@ -1,0 +1,14 @@
+# Các file thực thi compile từ Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+__debug_bin
+bin/
+
+# File môi trường chứa thông tin bảo mật (mật khẩu DB, JWT secret...)
+.env
+
+# Thư mục chứa các package tải về (nếu bạn vendor)
+vendor/
