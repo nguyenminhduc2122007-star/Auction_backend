@@ -45,6 +45,10 @@ func main() {
 	items.Use(middleware.AuthMiddleware())
 	{
 		items.POST("", itemHandler.CreateItem)
+		items.GET("", itemHandler.ListItems)
+		items.GET("/:id", itemHandler.GetItem)
+		items.PUT("/:id", itemHandler.UpdateItem)
+		items.DELETE("/:id", itemHandler.DeleteItem)
 	}
 
 	port := os.Getenv("SERVER_PORT")

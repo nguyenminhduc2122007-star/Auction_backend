@@ -12,3 +12,4 @@ bin/
 
 # Thư mục chứa các package tải về (nếu bạn vendor)
 vendor/
+claude/
