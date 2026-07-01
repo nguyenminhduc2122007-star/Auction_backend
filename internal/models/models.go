@@ -26,18 +26,18 @@ type User struct {
 }
 
 type Item struct {
-	ID          uint           `gorm:"primaryKey;autoIncrement" json:"id"`
-	CreatedAt   time.Time      `json:"created_at"`
-	UpdatedAt   time.Time      `json:"updated_at"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"` // Kích hoạt Soft Delete giống User
-	Title       string         `gorm:"type:varchar(255);not null" json:"title"`
-	Description string         `gorm:"type:text" json:"description"`
-	Price       float64        `gorm:"type:numeric(10,2);not null;default:0.00" json:"price"`
-	
-	// Khóa ngoại liên kết tới bảng Users
-	UserID      uint           `gorm:"not null" json:"user_id"`
-	
-	// Cấu hình Quan hệ (Relationship) và tự động tạo Ràng buộc (Constraint) ở DB
-	User        User           `gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"user,omitempty"`
+    ID          uint           `gorm:"primaryKey;autoIncrement" json:"id"`
+    CreatedAt   time.Time      `json:"created_at"`
+    UpdatedAt   time.Time      `json:"updated_at"`
+    DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"` 
+    Title       string         `gorm:"type:varchar(255);not null" json:"title"`
+    Description string         `gorm:"type:text" json:"description"`
+    Price       float64        `gorm:"type:numeric(10,2);not null;default:0.00" json:"price"`
+    
+    // Giữ nguyên để lưu mối quan hệ trong DB
+    UserID      uint           `gorm:"not null" json:"user_id"`
+    
+    // SỬA CHỖ NÀY: Thay json:"user,omitempty" bằng json:"-"
+    User        User           `gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 }
 
