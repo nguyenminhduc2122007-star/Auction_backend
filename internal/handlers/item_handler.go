@@ -24,10 +24,25 @@ type CreateItemRequest struct {
 	Price       float64 `json:"price" binding:"gte=0"`
 }
 
+
 type UpdateItemRequest struct {
 	Title       string  `json:"title" binding:"required"`
 	Description string  `json:"description"`
 	Price       float64 `json:"price" binding:"gte=0"`
+}
+
+type ListItemRequest struct {
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	Price       float64 `json:"price"`
+}
+
+type GetItemRequest struct {
+	ID uint `json:"id" binding:"required"`
+}
+
+type DeleteItemRequest struct {
+	ID uint `json:"id" binding:"required"`
 }
 
 func (h *ItemHandler) CreateItem(c *gin.Context) {
