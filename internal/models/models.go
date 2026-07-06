@@ -41,3 +41,15 @@ type Item struct {
     User        User           `gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
 }
 
+
+type Bid struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	
+	ItemID uint    `gorm:"not null;index" json:"item_id"`
+	UserID uint    `gorm:"not null" json:"user_id"`
+	Amount float64 `gorm:"type:numeric(10,2);not null" json:"amount"` // Số tiền người dùng đặt cược
+
+	Item Item `gorm:"foreignKey:ItemID" json:"-"`
+	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+}
