@@ -14,6 +14,28 @@ const (
 	UserTypeAdmin  UserType = "Admin"
 )
 
+// Helper methods kiểm tra tính hợp lệ và loại UserType
+func (u UserType) IsValid() bool {
+	switch u {
+	case UserTypeBidder, UserTypeSeller, UserTypeAdmin:
+		return true
+	default:
+		return false
+	}
+}
+
+func (u UserType) IsAdmin() bool {
+	return u == UserTypeAdmin
+}
+
+func (u UserType) IsSeller() bool {
+	return u == UserTypeSeller
+}
+
+func (u UserType) IsBidder() bool {
+	return u == UserTypeBidder
+}
+
 type User struct {
 	ID           uint           `gorm:"primaryKey;autoIncrement" json:"id"`
 	CreatedAt    time.Time      `json:"created_at"`
@@ -22,7 +44,7 @@ type User struct {
 	Email        string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
 	FullName     string         `gorm:"type:varchar(255);not null" json:"full_name"`
 	PasswordHash string         `gorm:"type:varchar(255);not null" json:"-"`
-	UserType     UserType       `gorm:"type:varchar(20);not null" json:"user_type"`
+	UserType     UserType       `gorm:"type:varchar(20);not null;default:'Bidder'" json:"user_type"`
 }
 
 type Item struct {
@@ -42,6 +64,3 @@ type Item struct {
 	Seller       User           `gorm:"foreignKey:SellerID" json:"-"`
 	UserID       uint           `gorm:"not null;default:0" json:"user_id"`
 }
-
-
-

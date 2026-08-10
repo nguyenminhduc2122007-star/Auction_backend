@@ -45,18 +45,51 @@ func (s *UserService) ListUsers() ([]UserListRow, error) {
 }
 
 func (s *UserService) UpdateUserRole(id uint, role string) (*models.User, error) {
+	// 1. Chuẩn hóa & Validate role đầu vào
 	normalized := strings.TrimSpace(strings.ToLower(role))
-	var userType models.UserType
+	var targetRole models.UserType
 	switch normalized {
 	case "admin":
-		userType = models.UserTypeAdmin
+		targetRole = models.UserTypeAdmin
 	case "seller":
-		userType = models.UserTypeSeller
+		targetRole = models.UserTypeSeller
 	case "bidder":
-		userType = models.UserTypeBidder
+		targetRole = models.UserTypeBidder
 	default:
-		return nil, errors.New("invalid role")
+		return nil, errors.New("vai trò không hợp lệ")
 	}
 
-	return s.userRepo.UpdateRole(id, userType)
+	// 2. Lấy thông tin user hiện tại trong DB
+	currentUser, err := s.userRepo.GetByID(id)
+	if err != nil {
+		return nil, errors.New("không tìm thấy người dùng")
+	}
+
+	// Nếu role không thay đổi, trả về kết quả luôn để tiết kiệm DB query
+	if currentUser.UserType == targetRole {
+		return currentUser, nil
+	}
+
+	// 3. Đếm số lượng Admin hiện tại trong hệ thống
+	adminCount, err := s.userRepo.CountByRole(models.UserTypeAdmin)
+	if err != nil {
+		return nil, err
+	}
+
+	// RULE 1: Không cho phép bổ nhiệm thêm ADMIN nếu đã có ADMIN trong hệ thống
+	if targetRole == models.UserTypeAdmin && currentUser.UserType != models.UserTypeAdmin {
+		if adminCount >= 1 {
+			return nil, errors.New("hệ thống đã có Admin, không thể bổ nhiệm thêm")
+		}
+	}
+
+	// RULE 2: Không cho phép hạ cấp ADMIN duy nhất xuống Seller/Bidder
+	if currentUser.UserType == models.UserTypeAdmin && targetRole != models.UserTypeAdmin {
+		if adminCount <= 1 {
+			return nil, errors.New("không thể hạ cấp Admin duy nhất của hệ thống")
+		}
+	}
+
+	// 4. Gọi Repository để cập nhật role
+	return s.userRepo.UpdateRole(id, targetRole)
 }

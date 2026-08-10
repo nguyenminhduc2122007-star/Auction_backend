@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -9,25 +10,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuthMiddleware kiểm tra JWT Token từ Cookie hoặc Header Authorization.
-// Bắt buộc request phải có Token hợp lệ, nếu không sẽ chặn lại và trả về 401.
+// AuthMiddleware kiểm tra JWT Token từ Header Authorization hoặc Cookie.
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := ""
 
-		// 1. Ưu tiên kiểm tra Token trong Cookie "token"
-		if cookieToken, err := c.Cookie("token"); err == nil && cookieToken != "" {
-			tokenString = cookieToken
-		} else {
-			// 2. Nếu không thấy Cookie, fallback đọc từ Header Authorization
-			authHeader := c.GetHeader("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+		// 1. Ưu tiên đọc từ Header Authorization (Chuẩn cho Single Page Application / Vue)
+		authHeader := c.GetHeader("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+
+		// 2. Nếu Header không có mới fallback tìm trong Cookie
+		if tokenString == "" {
+			if cookieToken, err := c.Cookie("token"); err == nil && cookieToken != "" {
+				tokenString = cookieToken
 			}
 		}
 
-		// ❌ 3. Nếu không tìm thấy Token ở cả Cookie lẫn Header -> Chặn ngay lập tức
+		// 3. Nếu không tìm thấy Token ở cả 2 nơi -> Chặn
 		if tokenString == "" {
+			log.Println("[AuthMiddleware] ❌ Không tìm thấy Token trong Header hoặc Cookie")
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"message": "unauthenticated",
@@ -36,9 +39,11 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// ❌ 4. Giải mã và validate Token -> Nếu Token hỏng/hết hạn thì chặn ngay
+		// 4. Giải mã và Validate Token
 		claims, err := utils.ValidateToken(tokenString)
 		if err != nil {
+			// In log chính xác nguyên nhân lỗi ra Terminal Backend
+			log.Printf("[AuthMiddleware] ❌ Validate Token thất bại: %v\n", err)
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"success": false,
 				"message": "unauthenticated",
@@ -47,10 +52,10 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// ✅ 5. Token chuẩn -> Lưu thông tin User vào Context để các Handler phía sau sử dụng
+		// 5. Token hợp lệ -> Gán dữ liệu vào Context
 		c.Set("user_id", claims.UserID)
-		c.Set("role", claims.UserType)      // e.g. "admin" hoặc "seller"
-		c.Set("user_type", claims.UserType) // giữ tương thích ngược
+		c.Set("role", claims.UserType)
+		c.Set("user_type", claims.UserType)
 
 		c.Next()
 	}

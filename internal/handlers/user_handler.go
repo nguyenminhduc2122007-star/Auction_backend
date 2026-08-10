@@ -24,7 +24,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 		return
 	}
 
-	utils.Success(c, http.StatusOK, "Thành công", users)
+	utils.Success(c, http.StatusOK, "Lấy danh sách người dùng thành công", users)
 }
 
 type UpdateUserRoleRequest struct {
@@ -34,21 +34,22 @@ type UpdateUserRoleRequest struct {
 func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 	id, err := utils.ParseUintID(c.Param("id"))
 	if err != nil {
-		utils.BadRequest(c, err.Error())
+		utils.BadRequest(c, "ID người dùng không hợp lệ")
 		return
 	}
 
 	var req UpdateUserRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, err.Error())
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
 		return
 	}
 
 	user, err := h.userService.UpdateUserRole(id, req.Role)
 	if err != nil {
+		// Trả về lỗi 400 Bad Request kèm message lỗi từ UserService (ví dụ: đã có Admin / không thể hạ cấp Admin duy nhất)
 		utils.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	utils.Success(c, http.StatusOK, "Thành công", user)
+	utils.Success(c, http.StatusOK, "Cập nhật vai trò thành công", user)
 }

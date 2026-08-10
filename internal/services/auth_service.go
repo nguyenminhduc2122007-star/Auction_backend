@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"strings"
 
 	"auction-backend/internal/models"
 	"auction-backend/internal/repository"
@@ -23,6 +24,25 @@ func (s *AuthService) Register(email, password, fullName string, userType models
 	if !utils.ValidatePassword(password) {
 		return nil, errors.New("password must be at least 8 characters")
 	}
+
+	// Chuẩn hóa userType
+	normalizedUserType := models.UserType(strings.TrimSpace(string(userType)))
+
+	// BẢO MẬT: Tuyệt đối không cho phép tự đăng ký tài khoản Admin
+	if normalizedUserType == models.UserTypeAdmin {
+		return nil, errors.New("registration with Admin role is forbidden")
+	}
+
+	// Mặc định gán là Bidder nếu người dùng không chọn vai trò
+	if normalizedUserType == "" {
+		normalizedUserType = models.UserTypeBidder
+	}
+
+	// Chỉ cho phép 2 role hợp lệ khi đăng ký công khai: Bidder hoặc Seller
+	if normalizedUserType != models.UserTypeBidder && normalizedUserType != models.UserTypeSeller {
+		return nil, errors.New("invalid user type for registration. Must be 'Bidder' or 'Seller'")
+	}
+
 	if _, err := s.userRepo.GetByEmail(email); err == nil {
 		return nil, errors.New("email already registered")
 	}
@@ -36,7 +56,7 @@ func (s *AuthService) Register(email, password, fullName string, userType models
 		Email:        email,
 		FullName:     fullName,
 		PasswordHash: hash,
-		UserType:     userType,
+		UserType:     normalizedUserType,
 	}
 
 	if err := s.userRepo.Create(user); err != nil {
