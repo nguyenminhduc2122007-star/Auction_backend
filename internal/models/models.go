@@ -26,20 +26,23 @@ type User struct {
 }
 
 type Item struct {
-    ID          uint           `gorm:"primaryKey;autoIncrement" json:"id"`
-    CreatedAt   time.Time      `json:"created_at"`
-    UpdatedAt   time.Time      `json:"updated_at"`
-    DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"` 
-    Title       string         `gorm:"type:varchar(255);not null" json:"title"`
-    Description string         `gorm:"type:text" json:"description"`
-    Price       float64        `gorm:"type:numeric(10,2);not null;default:0.00" json:"price"`
-    
-    // Giữ nguyên để lưu mối quan hệ trong DB
-    UserID      uint           `gorm:"not null" json:"user_id"`
-    
-    // SỬA CHỖ NÀY: Thay json:"user,omitempty" bằng json:"-"
-    User        User           `gorm:"foreignKey:UserID;constraint:OnUpdate:CASCADE,OnDelete:CASCADE;" json:"-"`
+	ID           uint           `gorm:"primaryKey;autoIncrement" json:"id"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	Title        string         `gorm:"type:varchar(255);not null" json:"title"`
+	Category     string         `gorm:"type:varchar(100);not null;default:General" json:"category"`
+	Status       string         `gorm:"type:varchar(50);not null;default:pending;index" json:"status"`
+	Price        float64        `gorm:"type:decimal(12,2);not null;default:0" json:"price"`
+	Description  string         `gorm:"type:text" json:"description"`
+	StartPrice   float64        `gorm:"type:decimal(12,2);not null;default:0" json:"start_price"`
+	CurrentPrice float64        `gorm:"type:decimal(12,2);not null;default:0" json:"current_price"`
+	BidStep      float64        `gorm:"type:decimal(12,2);not null;default:0" json:"bid_step"`
+	SellerID     uint           `gorm:"not null;index" json:"seller_id"`
+	Seller       User           `gorm:"foreignKey:SellerID" json:"-"`
+	UserID       uint           `gorm:"not null;default:0" json:"user_id"`
 }
+<<<<<<< HEAD
 
 
 type Bid struct {
@@ -53,3 +56,5 @@ type Bid struct {
 	Item Item `gorm:"foreignKey:ItemID" json:"-"`
 	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }
+=======
+>>>>>>> 7647dcd (feat(backend): refactor core services, auth middleware, and update DB schema)

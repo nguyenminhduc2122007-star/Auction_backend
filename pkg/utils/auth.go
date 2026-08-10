@@ -3,6 +3,7 @@ package utils
 import (
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -16,17 +17,15 @@ type Claims struct {
 }
 
 func getSecret() []byte {
-	s := os.Getenv("JWT_SECRET")
-	if s == "" {
-		s = "default_secret"
-	}
-	return []byte(s)
+	return []byte(os.Getenv("JWT_SECRET"))
 }
 
 func GenerateToken(userID uint, userType string) (string, error) {
+	// normalize role to lowercase (admin, seller, bidder)
+	role := strings.ToLower(userType)
 	claims := &Claims{
 		UserID:   userID,
-		UserType: userType,
+		UserType: role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 		},
