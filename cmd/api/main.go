@@ -5,12 +5,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"auction-backend/internal/database"
 	"auction-backend/internal/handlers"
 	"auction-backend/internal/middleware"
 	"auction-backend/internal/repository"
 	"auction-backend/internal/services"
+	"auction-backend/internal/worker"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -19,7 +21,6 @@ import (
 func main() {
 	loadEnv()
 
-	// enforce presence of critical secrets/config to avoid insecure defaults
 	if os.Getenv("JWT_SECRET") == "" {
 		log.Fatalf("missing required environment variable: JWT_SECRET")
 	}
@@ -33,18 +34,29 @@ func main() {
 
 	db := database.GetDB()
 
-	userRepo := repository.NewUserRepository(db)
-	authHandler := handlers.NewAuthHandler(services.NewAuthService(userRepo))
-	userHandler := handlers.NewUserHandler(services.NewUserService(userRepo))
+	// Khởi chạy Background Worker[cite: 17]
+	auctionWorker := worker.NewAuctionWorker(db)
+	auctionWorker.Start(10 * time.Second)
 
-	itemRepo := repository.NewItemRepository(db)
-	itemHandler := handlers.NewItemHandler(services.NewItemService(itemRepo, userRepo))
+	// Repositories[cite: 17]
+	userRepo := repository.NewUserRepository(db)
+	auctionRepo := repository.NewAuctionRepository(db)
+
+	// Services[cite: 17]
+	authService := services.NewAuthService(userRepo)
+	userService := services.NewUserService(userRepo)
+	auctionService := services.NewAuctionService(auctionRepo)
+
+	// Handlers[cite: 17]
+	authHandler := handlers.NewAuthHandler(authService)
+	userHandler := handlers.NewUserHandler(userService)
+	auctionHandler := handlers.NewAuctionHandler(auctionService)
+	wsHandler := handlers.NewWSHandler(auctionService)
 
 	router := gin.Default()
 	router.Use(corsMiddleware())
 
-	// register consolidated routes: /api/auth, /api/items and /api/admin
-	registerRoutes(router, itemHandler, userHandler, authHandler)
+	registerRoutes(router, userHandler, authHandler, auctionHandler, wsHandler)
 
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
@@ -57,11 +69,16 @@ func main() {
 	}
 }
 
-// registerRoutes sets up the consolidated RESTful API routes per spec
-func registerRoutes(router *gin.Engine, itemHandler *handlers.ItemHandler, userHandler *handlers.UserHandler, authHandler *handlers.AuthHandler) {
+func registerRoutes(
+	router *gin.Engine,
+	userHandler *handlers.UserHandler,
+	authHandler *handlers.AuthHandler,
+	auctionHandler *handlers.AuctionHandler,
+	wsHandler *handlers.WSHandler,
+) {
 	api := router.Group("/api")
 
-	// auth group (public)
+	// 1. Authentication Group (Public)[cite: 17]
 	auth := api.Group("/auth")
 	{
 		auth.POST("/register", authHandler.Register)
@@ -69,29 +86,39 @@ func registerRoutes(router *gin.Engine, itemHandler *handlers.ItemHandler, userH
 		auth.POST("/logout", authHandler.Logout)
 	}
 
-	// items group
-	items := api.Group("/items")
+	// 2. Auctions Group (Toàn bộ luồng Đấu giá & Sản phẩm)[cite: 17]
+	auctions := api.Group("/auctions")
 	{
-		// public list and get details
-		items.GET("", itemHandler.CommonListItems)
-		items.GET("/:id", itemHandler.GetItem)
+		// --- Public / Reading API ---[cite: 17]
+		auctions.GET("", auctionHandler.ListAuctions)
 
-		// authenticated item operations
-		items.POST("", middleware.AuthMiddleware(), itemHandler.CommonCreateItem)
-		items.PUT("/:id", middleware.AuthMiddleware(), itemHandler.CommonUpdateItem)
-		items.DELETE("/:id", middleware.AuthMiddleware(), itemHandler.CommonDeleteItem)
-		items.PUT("/:id/status", middleware.AuthMiddleware(), middleware.RequireAdmin(), itemHandler.AdminUpdateItemStatus)
+		// --- Seller / Draft Workflow ---[cite: 17]
+		auctions.GET("/seller-eligibility", middleware.AuthMiddleware(), auctionHandler.CheckEligibility)
+		auctions.POST("/drafts", middleware.AuthMiddleware(), auctionHandler.CreateDraft)
+		auctions.PUT("/drafts/:id", middleware.AuthMiddleware(), auctionHandler.UpdateDraft)
+		auctions.PUT("/drafts/:id/pricing", middleware.AuthMiddleware(), auctionHandler.UpdatePricing)
+		auctions.GET("/drafts/:id/preview", middleware.AuthMiddleware(), auctionHandler.GetDraftPreview)
+		auctions.POST("/drafts/:id/publish", middleware.AuthMiddleware(), auctionHandler.Publish)
+
+		// --- Dynamic ID API ---[cite: 17]
+		auctions.GET("/:id", auctionHandler.GetAuctionDetail)
+		auctions.PATCH("/:id/status", middleware.AuthMiddleware(), auctionHandler.UpdateStatus)
+		auctions.PATCH("/:id/approve", middleware.AuthMiddleware(), auctionHandler.ApproveAuction) // Route phê duyệt[cite: 17]
+		auctions.DELETE("/:id", middleware.AuthMiddleware(), auctionHandler.DeleteAuction)
+
+		// Realtime WebSocket[cite: 17]
+		auctions.GET("/:id/ws", wsHandler.ServeWS)
 	}
 
-	// admin-only routes (require admin)
+	// 3. Admin Group[cite: 17]
 	admin := api.Group("/admin")
 	admin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 	{
-		admin.GET("/stats", itemHandler.DashboardStats)
-		admin.GET("/dashboard/stats", itemHandler.DashboardStats)
+		admin.GET("/stats", auctionHandler.DashboardStats)
+		admin.GET("/dashboard/stats", auctionHandler.DashboardStats)
 		admin.GET("/users", userHandler.ListUsers)
 		admin.PUT("/users/:id/role", userHandler.UpdateUserRole)
-		admin.GET("/auctions", itemHandler.AdminListItems)
+		admin.GET("/auctions", auctionHandler.AdminListAuctions) // Trả về toàn bộ danh sách cho trang quản trị[cite: 17]
 	}
 }
 
@@ -102,7 +129,7 @@ func corsMiddleware() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		}
 
 		if c.Request.Method == http.MethodOptions {

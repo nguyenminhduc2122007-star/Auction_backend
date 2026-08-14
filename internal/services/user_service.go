@@ -53,7 +53,7 @@ func (s *UserService) UpdateUserRole(id uint, role string) (*models.User, error)
 		targetRole = models.UserTypeAdmin
 	case "seller":
 		targetRole = models.UserTypeSeller
-	case "bidder":
+	case "bidder", "user": // 🟢 Bổ sung "user" ở đây để tương thích hoàn toàn với Frontend
 		targetRole = models.UserTypeBidder
 	default:
 		return nil, errors.New("vai trò không hợp lệ")

@@ -45,7 +45,14 @@ func InitDB() error {
 }
 
 func MigrateModels() error {
-	if err := DB.AutoMigrate(&models.User{}, &models.Item{}); err != nil {
+	if err := DB.AutoMigrate(
+		&models.User{},
+		&models.Item{},
+		&models.Auction{},
+		&models.AuctionPricing{},
+		&models.AuctionShippingPayment{},
+		&models.Bid{},
+	); err != nil {
 		return fmt.Errorf("failed to migrate models: %w", err)
 	}
 	log.Println("Database migration completed")
