@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"auction-backend/internal/models"
 	"auction-backend/internal/services"
@@ -20,6 +21,15 @@ func NewAuctionHandler(service *services.AuctionService) *AuctionHandler {
 
 type UpdateStatusInput struct {
 	Status string `json:"status" binding:"required"`
+}
+
+type RejectAuctionInput struct {
+	Reason string `json:"reason"`
+}
+
+type RelistAuctionInput struct {
+	StartAt time.Time `json:"start_at" binding:"required"`
+	EndAt   time.Time `json:"end_at" binding:"required"`
 }
 
 // Helper lấy User ID từ Context sau khi qua Middleware Auth
@@ -425,4 +435,77 @@ func (h *AuctionHandler) Publish(c *gin.Context) {
 		"message": "Phiên đấu giá đã xuất bản thành công!",
 		"data":    auction,
 	})
+}
+
+func (h *AuctionHandler) RejectAuction(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+	auctionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid auction ID"})
+		return
+	}
+	var input RejectAuctionInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid rejection payload"})
+		return
+	}
+	if err := h.service.RejectAuction(userID, uint(auctionID), input.Reason); err != nil {
+		h.writeAuctionError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Auction rejected"})
+}
+
+func (h *AuctionHandler) RelistAuction(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+	auctionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid auction ID"})
+		return
+	}
+	var input RelistAuctionInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid relist payload"})
+		return
+	}
+	auction, err := h.service.RelistAuction(userID, uint(auctionID), input.StartAt, input.EndAt)
+	if err != nil {
+		h.writeAuctionError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": auction})
+}
+
+func (h *AuctionHandler) ListMyAuctions(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	status := c.DefaultQuery("status", "ALL")
+	auctions, total, err := h.service.ListSellerAuctions(userID, status, page, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": auctions, "total": total, "page": page, "limit": limit})
+}
+
+func (h *AuctionHandler) writeAuctionError(c *gin.Context, err error) {
+	if err == services.ErrAuctionNotFound {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if err == services.ErrUnauthorized {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 }

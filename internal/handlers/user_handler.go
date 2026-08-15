@@ -46,10 +46,77 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 
 	user, err := h.userService.UpdateUserRole(id, req.Role)
 	if err != nil {
-		// Trả về lỗi 400 Bad Request kèm message lỗi từ UserService (ví dụ: đã có Admin / không thể hạ cấp Admin duy nhất)
 		utils.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	utils.Success(c, http.StatusOK, "Cập nhật vai trò thành công", user)
+}
+
+// --- F-005 HANDLERS ---
+
+func (h *UserHandler) GetProfile(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	profile, err := h.userService.GetProfile(userID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy thông tin cá nhân"})
+		return
+	}
+
+	c.JSON(http.StatusOK, profile)
+}
+
+func (h *UserHandler) UpdateProfile(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	var req services.UpdateProfileInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.BadRequest(c, "Dữ liệu cập nhật không hợp lệ")
+		return
+	}
+
+	user, err := h.userService.UpdateProfile(userID, req)
+	if err != nil {
+		utils.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Cập nhật thông tin cá nhân thành công", user)
+}
+
+func (h *UserHandler) GetMyBids(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	bids, err := h.userService.GetMyBids(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, bids)
+}
+
+func (h *UserHandler) GetWonAuctions(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	won, err := h.userService.GetWonAuctions(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, won)
 }

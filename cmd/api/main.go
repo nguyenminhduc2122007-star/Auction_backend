@@ -34,20 +34,20 @@ func main() {
 
 	db := database.GetDB()
 
-	// Khởi chạy Background Worker[cite: 17]
+	// Khởi chạy Background Worker
 	auctionWorker := worker.NewAuctionWorker(db)
 	auctionWorker.Start(10 * time.Second)
 
-	// Repositories[cite: 17]
+	// Repositories
 	userRepo := repository.NewUserRepository(db)
 	auctionRepo := repository.NewAuctionRepository(db)
 
-	// Services[cite: 17]
+	// Services
 	authService := services.NewAuthService(userRepo)
 	userService := services.NewUserService(userRepo)
 	auctionService := services.NewAuctionService(auctionRepo)
 
-	// Handlers[cite: 17]
+	// Handlers
 	authHandler := handlers.NewAuthHandler(authService)
 	userHandler := handlers.NewUserHandler(userService)
 	auctionHandler := handlers.NewAuctionHandler(auctionService)
@@ -78,7 +78,7 @@ func registerRoutes(
 ) {
 	api := router.Group("/api")
 
-	// 1. Authentication Group (Public)[cite: 17]
+	// 1. Authentication Group
 	auth := api.Group("/auth")
 	{
 		auth.POST("/register", authHandler.Register)
@@ -86,13 +86,23 @@ func registerRoutes(
 		auth.POST("/logout", authHandler.Logout)
 	}
 
-	// 2. Auctions Group (Toàn bộ luồng Đấu giá & Sản phẩm)[cite: 17]
+	// 2. User Profile Group (F-005) - ĐƯỢC BỔ SUNG
+	users := api.Group("/users")
+	users.Use(middleware.AuthMiddleware())
+	{
+		users.GET("/me/profile", userHandler.GetProfile)
+		users.PUT("/me/profile", userHandler.UpdateProfile)
+		users.GET("/me/bids", userHandler.GetMyBids)
+		users.GET("/me/won-auctions", userHandler.GetWonAuctions)
+		users.GET("/me/my-auctions", auctionHandler.ListMyAuctions)
+	}
+
+	// 3. Auctions Group
 	auctions := api.Group("/auctions")
 	{
-		// --- Public / Reading API ---[cite: 17]
 		auctions.GET("", auctionHandler.ListAuctions)
+		auctions.GET("/mine", middleware.AuthMiddleware(), auctionHandler.ListMyAuctions)
 
-		// --- Seller / Draft Workflow ---[cite: 17]
 		auctions.GET("/seller-eligibility", middleware.AuthMiddleware(), auctionHandler.CheckEligibility)
 		auctions.POST("/drafts", middleware.AuthMiddleware(), auctionHandler.CreateDraft)
 		auctions.PUT("/drafts/:id", middleware.AuthMiddleware(), auctionHandler.UpdateDraft)
@@ -100,17 +110,15 @@ func registerRoutes(
 		auctions.GET("/drafts/:id/preview", middleware.AuthMiddleware(), auctionHandler.GetDraftPreview)
 		auctions.POST("/drafts/:id/publish", middleware.AuthMiddleware(), auctionHandler.Publish)
 
-		// --- Dynamic ID API ---[cite: 17]
 		auctions.GET("/:id", auctionHandler.GetAuctionDetail)
 		auctions.PATCH("/:id/status", middleware.AuthMiddleware(), auctionHandler.UpdateStatus)
-		auctions.PATCH("/:id/approve", middleware.AuthMiddleware(), auctionHandler.ApproveAuction) // Route phê duyệt[cite: 17]
 		auctions.DELETE("/:id", middleware.AuthMiddleware(), auctionHandler.DeleteAuction)
+		auctions.POST("/:id/relist", middleware.AuthMiddleware(), auctionHandler.RelistAuction)
 
-		// Realtime WebSocket[cite: 17]
 		auctions.GET("/:id/ws", wsHandler.ServeWS)
 	}
 
-	// 3. Admin Group[cite: 17]
+	// 4. Admin Group
 	admin := api.Group("/admin")
 	admin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 	{
@@ -118,7 +126,9 @@ func registerRoutes(
 		admin.GET("/dashboard/stats", auctionHandler.DashboardStats)
 		admin.GET("/users", userHandler.ListUsers)
 		admin.PUT("/users/:id/role", userHandler.UpdateUserRole)
-		admin.GET("/auctions", auctionHandler.AdminListAuctions) // Trả về toàn bộ danh sách cho trang quản trị[cite: 17]
+		admin.GET("/auctions", auctionHandler.AdminListAuctions)
+		admin.PATCH("/auctions/:id/approve", auctionHandler.ApproveAuction)
+		admin.PATCH("/auctions/:id/reject", auctionHandler.RejectAuction)
 	}
 }
 

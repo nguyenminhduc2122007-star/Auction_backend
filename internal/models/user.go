@@ -14,7 +14,6 @@ const (
 	UserTypeAdmin  UserType = "Admin"
 )
 
-// Helper methods kiểm tra tính hợp lệ và loại UserType
 func (u UserType) IsValid() bool {
 	switch u {
 	case UserTypeBidder, UserTypeSeller, UserTypeAdmin:
@@ -37,14 +36,17 @@ func (u UserType) IsBidder() bool {
 }
 
 type User struct {
-	ID           uint           `gorm:"primaryKey;autoIncrement" json:"id"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-	Email        string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
-	FullName     string         `gorm:"type:varchar(255);not null" json:"full_name"`
-	PasswordHash string         `gorm:"type:varchar(255);not null" json:"-"`
-	UserType     UserType       `gorm:"type:varchar(20);not null;default:'Bidder'" json:"user_type"`
+	ID              uint           `gorm:"primaryKey;autoIncrement" json:"id"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+	Email           string         `gorm:"type:varchar(255);uniqueIndex;not null" json:"email"`
+	FullName        string         `gorm:"type:varchar(255);not null" json:"full_name"`
+	PasswordHash    string         `gorm:"type:varchar(255);not null" json:"-"`
+	UserType        UserType       `gorm:"type:varchar(20);not null;default:'Bidder'" json:"user_type"`
+	WalletBalance   float64        `gorm:"type:numeric(15,2);not null;default:0" json:"wallet_balance"`
+	Phone           string         `gorm:"type:varchar(32)" json:"phone,omitempty"`
+	ShippingAddress string         `gorm:"type:text" json:"shipping_address,omitempty"`
 }
 
 type Item struct {
@@ -63,4 +65,14 @@ type Item struct {
 	SellerID     uint           `gorm:"not null;index" json:"seller_id"`
 	Seller       User           `gorm:"foreignKey:SellerID" json:"-"`
 	UserID       uint           `gorm:"not null;default:0" json:"user_id"`
+}
+
+// DTO cho F-005 (Trả về thông tin chi tiết Tab Đang đặt giá)
+type UserBidItemDTO struct {
+	AuctionID    uint    `json:"auction_id"`
+	Title        string  `json:"title"`
+	CurrentPrice float64 `json:"current_price"`
+	UserMaxBid   float64 `json:"user_max_bid"`
+	IsWinning    bool    `json:"is_winning"`
+	Status       string  `json:"status"`
 }

@@ -6,6 +6,7 @@ import (
 	"auction-backend/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type AuctionRepository struct {
@@ -39,8 +40,30 @@ func (r *AuctionRepository) GetByID(id uint) (*models.Auction, error) {
 	return &auction, nil
 }
 
+// GetByIDForUpdate locks the auction row until the surrounding transaction ends.
+// Bids for the same auction must acquire this lock before calculating a minimum bid.
+func (r *AuctionRepository) GetByIDForUpdate(tx *gorm.DB, id uint) (*models.Auction, error) {
+	var auction models.Auction
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Preload("Pricing").
+		Preload("ShippingPayment").
+		Preload("Seller").
+		First(&auction, id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &auction, nil
+}
+
 func (r *AuctionRepository) UpdateAuction(auction *models.Auction) error {
 	return r.db.Save(auction).Error
+}
+
+func (r *AuctionRepository) UpdateAuctionInTx(tx *gorm.DB, auction *models.Auction) error {
+	return tx.Save(auction).Error
 }
 
 // UpdateStatus - Cập nhật trực tiếp cột status của auction theo ID
@@ -110,6 +133,32 @@ func (r *AuctionRepository) AdminListAuctions(page, limit int) ([]models.Auction
 	return auctions, total, err
 }
 
+func (r *AuctionRepository) ListBySeller(sellerID uint, page, limit int, status string) ([]models.Auction, int64, error) {
+	var auctions []models.Auction
+	var total int64
+	query := r.db.Model(&models.Auction{}).Where("seller_id = ?", sellerID)
+	if status != "" { query = query.Where("status = ?", status) }
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := query.Preload("Pricing").Preload("ShippingPayment").Order("created_at DESC").Offset((page - 1) * limit).Limit(limit).Find(&auctions).Error
+	return auctions, total, err
+}
+
+func (r *AuctionRepository) ListWonByUser(userID uint) ([]models.Auction, error) {
+	var auctions []models.Auction
+	err := r.db.Where("winner_id = ? AND sale_status = ?", userID, "SOLD").Preload("Pricing").Order("updated_at DESC").Find(&auctions).Error
+	return auctions, err
+}
+
+func (r *AuctionRepository) ListBidParticipations(userID uint) ([]models.Auction, error) {
+	var auctions []models.Auction
+	err := r.db.Model(&models.Auction{}).Distinct("auctions.*").Joins("JOIN bids ON bids.auction_id = auctions.id").Where("bids.bidder_id = ?", userID).Preload("Pricing").Order("auctions.updated_at DESC").Find(&auctions).Error
+	return auctions, err
+}
+
+func (r *AuctionRepository) CountSellerAuctions(userID uint) (int64, error) { var count int64; err := r.db.Model(&models.Auction{}).Where("seller_id = ?", userID).Count(&count).Error; return count, err }
+
 // GetDashboardStats Thống kê dữ liệu tổng quan cho Admin Dashboard
 func (r *AuctionRepository) GetDashboardStats() (map[string]interface{}, error) {
 	var totalAuctions int64
@@ -166,9 +215,24 @@ func (r *AuctionRepository) CreateBid(bid *models.Bid) error {
 	return r.db.Create(bid).Error
 }
 
+func (r *AuctionRepository) CreateBidInTx(tx *gorm.DB, bid *models.Bid) error {
+	return tx.Create(bid).Error
+}
+
 func (r *AuctionRepository) GetHighestBid(auctionID uint) (*models.Bid, error) {
 	var bid models.Bid
 	err := r.db.Where("auction_id = ?", auctionID).
+		Order("amount DESC, created_at ASC").
+		First(&bid).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &bid, err
+}
+
+func (r *AuctionRepository) GetHighestBidInTx(tx *gorm.DB, auctionID uint) (*models.Bid, error) {
+	var bid models.Bid
+	err := tx.Where("auction_id = ?", auctionID).
 		Order("amount DESC, created_at ASC").
 		First(&bid).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

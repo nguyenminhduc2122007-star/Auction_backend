@@ -7,11 +7,13 @@ import (
 type AuctionStatus string
 
 const (
-	AuctionStatusDraft     AuctionStatus = "DRAFT"
-	AuctionStatusScheduled AuctionStatus = "SCHEDULED"
-	AuctionStatusLive      AuctionStatus = "LIVE"
-	AuctionStatusEnded     AuctionStatus = "ENDED"
-	AuctionStatusCancelled AuctionStatus = "CANCELLED"
+	AuctionStatusDraft           AuctionStatus = "DRAFT"
+	AuctionStatusPendingApproval AuctionStatus = "PENDING_APPROVAL"
+	AuctionStatusRejected        AuctionStatus = "REJECTED"
+	AuctionStatusScheduled       AuctionStatus = "SCHEDULED"
+	AuctionStatusLive            AuctionStatus = "LIVE"
+	AuctionStatusEnded           AuctionStatus = "ENDED"
+	AuctionStatusCancelled       AuctionStatus = "CANCELLED"
 )
 
 type BidType string
@@ -35,10 +37,16 @@ type Auction struct {
 	StartAt *time.Time `json:"start_at,omitempty"`
 	EndAt   *time.Time `json:"end_at,omitempty"`
 
+	WinnerID        *uint    `json:"winner_id,omitempty"`
+	WinningBidID    *uint    `json:"winning_bid_id,omitempty"`
+	WinningAmount   *float64 `json:"winning_amount,omitempty"`
+	SaleStatus      string   `gorm:"type:varchar(20);default:'PENDING'" json:"sale_status"`
+	RejectionReason string   `gorm:"type:text" json:"rejection_reason,omitempty"`
+
 	// Relationships
-	Pricing        *AuctionPricing        `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"pricing,omitempty"`
+	Pricing         *AuctionPricing         `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"pricing,omitempty"`
 	ShippingPayment *AuctionShippingPayment `gorm:"foreignKey:AuctionID;constraint:OnDelete:CASCADE" json:"shipping_payment,omitempty"`
-	Bids           []Bid                  `gorm:"foreignKey:AuctionID" json:"bids,omitempty"`
+	Bids            []Bid                   `gorm:"foreignKey:AuctionID" json:"bids,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

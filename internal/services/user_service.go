@@ -20,6 +20,25 @@ type UserListRow struct {
 	CreatedAt string          `json:"created_at"`
 }
 
+type UserProfileResponse struct {
+	ID                 uint            `json:"id"`
+	Name               string          `json:"name"`
+	Email              string          `json:"email"`
+	Phone              string          `json:"phone"`
+	Address            string          `json:"address"`
+	UserType           models.UserType `json:"user_type"`
+	Balance            float64         `json:"balance"`
+	ParticipatingCount int64           `json:"participating_count"`
+	WonCount           int64           `json:"won_count"`
+	MyAuctionCount     int64           `json:"my_auction_count"`
+}
+
+type UpdateProfileInput struct {
+	FullName string `json:"full_name"`
+	Phone    string `json:"phone"`
+	Address  string `json:"address"`
+}
+
 func NewUserService(userRepo *repository.UserRepository) *UserService {
 	return &UserService{userRepo: userRepo}
 }
@@ -45,7 +64,6 @@ func (s *UserService) ListUsers() ([]UserListRow, error) {
 }
 
 func (s *UserService) UpdateUserRole(id uint, role string) (*models.User, error) {
-	// 1. Chuẩn hóa & Validate role đầu vào
 	normalized := strings.TrimSpace(strings.ToLower(role))
 	var targetRole models.UserType
 	switch normalized {
@@ -53,43 +71,91 @@ func (s *UserService) UpdateUserRole(id uint, role string) (*models.User, error)
 		targetRole = models.UserTypeAdmin
 	case "seller":
 		targetRole = models.UserTypeSeller
-	case "bidder", "user": // 🟢 Bổ sung "user" ở đây để tương thích hoàn toàn với Frontend
+	case "bidder", "user":
 		targetRole = models.UserTypeBidder
 	default:
 		return nil, errors.New("vai trò không hợp lệ")
 	}
 
-	// 2. Lấy thông tin user hiện tại trong DB
 	currentUser, err := s.userRepo.GetByID(id)
 	if err != nil {
 		return nil, errors.New("không tìm thấy người dùng")
 	}
 
-	// Nếu role không thay đổi, trả về kết quả luôn để tiết kiệm DB query
 	if currentUser.UserType == targetRole {
 		return currentUser, nil
 	}
 
-	// 3. Đếm số lượng Admin hiện tại trong hệ thống
 	adminCount, err := s.userRepo.CountByRole(models.UserTypeAdmin)
 	if err != nil {
 		return nil, err
 	}
 
-	// RULE 1: Không cho phép bổ nhiệm thêm ADMIN nếu đã có ADMIN trong hệ thống
 	if targetRole == models.UserTypeAdmin && currentUser.UserType != models.UserTypeAdmin {
 		if adminCount >= 1 {
 			return nil, errors.New("hệ thống đã có Admin, không thể bổ nhiệm thêm")
 		}
 	}
 
-	// RULE 2: Không cho phép hạ cấp ADMIN duy nhất xuống Seller/Bidder
 	if currentUser.UserType == models.UserTypeAdmin && targetRole != models.UserTypeAdmin {
 		if adminCount <= 1 {
 			return nil, errors.New("không thể hạ cấp Admin duy nhất của hệ thống")
 		}
 	}
 
-	// 4. Gọi Repository để cập nhật role
 	return s.userRepo.UpdateRole(id, targetRole)
+}
+
+// --- F-005 SERVICE METHODS ---
+
+func (s *UserService) GetProfile(userID uint) (*UserProfileResponse, error) {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	partCount, wonCount, myAuctionCount, err := s.userRepo.GetProfileStats(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &UserProfileResponse{
+		ID:                 user.ID,
+		Name:               user.FullName,
+		Email:              user.Email,
+		Phone:              user.Phone,
+		Address:            user.ShippingAddress,
+		UserType:           user.UserType,
+		Balance:            user.WalletBalance,
+		ParticipatingCount: partCount,
+		WonCount:           wonCount,
+		MyAuctionCount:     myAuctionCount,
+	}, nil
+}
+
+func (s *UserService) UpdateProfile(userID uint, input UpdateProfileInput) (*models.User, error) {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if input.FullName != "" {
+		user.FullName = input.FullName
+	}
+	user.Phone = input.Phone
+	user.ShippingAddress = input.Address
+
+	if err := s.userRepo.UpdateProfile(user); err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+func (s *UserService) GetMyBids(userID uint) ([]models.UserBidItemDTO, error) {
+	return s.userRepo.GetUserBids(userID)
+}
+
+func (s *UserService) GetWonAuctions(userID uint) ([]models.Auction, error) {
+	return s.userRepo.GetWonAuctions(userID)
 }

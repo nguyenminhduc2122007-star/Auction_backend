@@ -6,18 +6,21 @@ import (
 
 	"auction-backend/internal/handlers"
 	"auction-backend/internal/models"
+	"auction-backend/internal/repository"
 
 	"gorm.io/gorm"
 )
 
 type AuctionWorker struct {
 	db       *gorm.DB
+	repo     *repository.AuctionRepository
 	stopChan chan struct{}
 }
 
 func NewAuctionWorker(db *gorm.DB) *AuctionWorker {
 	return &AuctionWorker{
 		db:       db,
+		repo:     repository.NewAuctionRepository(db),
 		stopChan: make(chan struct{}),
 	}
 }
@@ -62,22 +65,58 @@ func (w *AuctionWorker) processAuctions() {
 	}
 
 	for _, auction := range endingAuctions {
-		// Cập nhật trạng thái thành ENDED an toàn qua Gorm Model
-		err := w.db.Model(&models.Auction{}).Where("id = ?", auction.ID).Update("status", models.AuctionStatusEnded).Error
+		var endedAuction *models.Auction
+		err := w.db.Transaction(func(tx *gorm.DB) error {
+			// Serialize completion with ProcessBid and re-check eligibility after
+			// acquiring the row lock.
+			lockedAuction, err := w.repo.GetByIDForUpdate(tx, auction.ID)
+			if err != nil || lockedAuction == nil {
+				return err
+			}
+			if lockedAuction.Status != models.AuctionStatusLive || lockedAuction.EndAt == nil || lockedAuction.EndAt.After(now) {
+				return nil
+			}
+
+			highestBid, err := w.repo.GetHighestBidInTx(tx, lockedAuction.ID)
+			if err != nil {
+				return err
+			}
+
+			lockedAuction.Status = models.AuctionStatusEnded
+			if highestBid == nil {
+				lockedAuction.SaleStatus = "UNSOLD"
+			} else {
+				winningAmount := highestBid.Amount
+				lockedAuction.SaleStatus = "SOLD"
+				lockedAuction.WinnerID = &highestBid.BidderID
+				lockedAuction.WinningBidID = &highestBid.ID
+				lockedAuction.WinningAmount = &winningAmount
+			}
+
+			if err := w.repo.UpdateAuctionInTx(tx, lockedAuction); err != nil {
+				return err
+			}
+			endedAuction = lockedAuction
+			return nil
+		})
 		if err != nil {
 			log.Printf("[Worker Error] Failed to end auction ID %d: %v", auction.ID, err)
 			continue
 		}
+		if endedAuction == nil {
+			continue
+		}
 
-		log.Printf("[Worker] Auction ID %d ended successfully", auction.ID)
+		log.Printf("[Worker] Auction ID %d ended successfully with sale status %s", endedAuction.ID, endedAuction.SaleStatus)
 
 		// Broadcast thông báo WebSocket cho các client đang xem trong phòng
-		handlers.Hub.Broadcast(auction.ID, handlers.WSMessage{
+		handlers.Hub.Broadcast(endedAuction.ID, handlers.WSMessage{
 			Event: "auction_ended",
 			Payload: map[string]interface{}{
-				"auction_id": auction.ID,
-				"message":    "Phiên đấu giá đã kết thúc!",
-				"ended_at":   now.Format(time.RFC3339),
+				"auction_id":  endedAuction.ID,
+				"message":     "Phiên đấu giá đã kết thúc!",
+				"ended_at":    now.Format(time.RFC3339),
+				"sale_status": endedAuction.SaleStatus,
 			},
 		})
 	}
