@@ -106,6 +106,7 @@ func (s *AuctionService) ApproveAuction(userID uint, auctionID uint) error {
 	return s.repo.UpdateStatus(auctionID, "ACTIVE")
 }
 
+// SaveDraftInput - DTO mở rộng hỗ trợ nhận trọn vẹn dữ liệu từ Form Wizard Frontend
 type SaveDraftInput struct {
 	Title         string  `json:"title"`
 	Description   string  `json:"description"`
@@ -115,6 +116,36 @@ type SaveDraftInput struct {
 	ShippingPayer string  `json:"shipping_fee_payer"`
 	PackageWeight float64 `json:"package_weight"`
 	ReturnPolicy  string  `json:"return_policy"`
+
+	// Nhận đồng thời các alias giá tiền & bước giá
+	StartingBid  float64 `json:"starting_bid"`
+	StartPrice   float64 `json:"start_price"`
+	Price        float64 `json:"price"`
+	
+	BidIncrement float64 `json:"bid_increment"`
+	BidStep      float64 `json:"bid_step"`
+
+	BuyNowPrice  float64 `json:"buy_now_price"`
+	ReservePrice float64 `json:"reserve_price"`
+}
+
+// GetStartingBid - Trích xuất Giá khởi điểm chuẩn từ các trường Alias
+func (input *SaveDraftInput) GetStartingBid() float64 {
+	if input.StartingBid > 0 {
+		return input.StartingBid
+	}
+	if input.StartPrice > 0 {
+		return input.StartPrice
+	}
+	return input.Price
+}
+
+// GetBidIncrement - Trích xuất Bước giá chuẩn từ các trường Alias
+func (input *SaveDraftInput) GetBidIncrement() float64 {
+	if input.BidIncrement > 0 {
+		return input.BidIncrement
+	}
+	return input.BidStep
 }
 
 func (s *AuctionService) CreateDraft(sellerID uint, input SaveDraftInput) (*models.Auction, error) {
@@ -132,6 +163,7 @@ func (s *AuctionService) CreateDraft(sellerID uint, input SaveDraftInput) (*mode
 			return err
 		}
 
+		// 1. Lưu thông tin Thanh toán / Vận chuyển
 		if input.PaymentTerms != "" || input.ShippingPayer != "" || input.PackageWeight > 0 || input.ReturnPolicy != "" {
 			sp := &models.AuctionShippingPayment{
 				AuctionID:        auction.ID,
@@ -144,6 +176,23 @@ func (s *AuctionService) CreateDraft(sellerID uint, input SaveDraftInput) (*mode
 				return err
 			}
 		}
+
+		// 2. Lưu Giá khởi điểm & Bước giá (Nếu có truyền lên)
+		startBid := input.GetStartingBid()
+		bidInc := input.GetBidIncrement()
+		if startBid > 0 {
+			pricing := &models.AuctionPricing{
+				AuctionID:    auction.ID,
+				StartingBid:  startBid,
+				BidIncrement: bidInc,
+				BuyNowPrice:  input.BuyNowPrice,
+				ReservePrice: input.ReservePrice,
+			}
+			if err := s.repo.UpsertPricing(tx, pricing); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 
@@ -176,6 +225,7 @@ func (s *AuctionService) UpdateDraft(sellerID uint, auctionID uint, input SaveDr
 			return err
 		}
 
+		// 1. Cập nhật Shipping & Payment
 		sp := &models.AuctionShippingPayment{
 			AuctionID:        auction.ID,
 			PaymentTerms:     input.PaymentTerms,
@@ -183,7 +233,27 @@ func (s *AuctionService) UpdateDraft(sellerID uint, auctionID uint, input SaveDr
 			PackageWeight:    input.PackageWeight,
 			ReturnPolicy:     input.ReturnPolicy,
 		}
-		return s.repo.UpsertShippingPayment(tx, sp)
+		if err := s.repo.UpsertShippingPayment(tx, sp); err != nil {
+			return err
+		}
+
+		// 2. Cập nhật Pricing (Giá tiền & Bước giá)
+		startBid := input.GetStartingBid()
+		bidInc := input.GetBidIncrement()
+		if startBid > 0 {
+			pricing := &models.AuctionPricing{
+				AuctionID:    auction.ID,
+				StartingBid:  startBid,
+				BidIncrement: bidInc,
+				BuyNowPrice:  input.BuyNowPrice,
+				ReservePrice: input.ReservePrice,
+			}
+			if err := s.repo.UpsertPricing(tx, pricing); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 
 	if err != nil {
