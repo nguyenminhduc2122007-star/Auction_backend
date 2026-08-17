@@ -47,6 +47,17 @@ type User struct {
 	WalletBalance   float64        `gorm:"type:numeric(15,2);not null;default:0" json:"wallet_balance"`
 	Phone           string         `gorm:"type:varchar(32)" json:"phone,omitempty"`
 	ShippingAddress string         `gorm:"type:text" json:"shipping_address,omitempty"`
+	IsSuspicious    bool           `gorm:"default:false" json:"is_suspicious"` // Cờ đánh dấu Spam/Giá ảo
+}
+
+// Bảng mới: Lịch sử bị cảnh cáo của User
+type UserWarning struct {
+	ID        uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UserID    uint      `gorm:"not null;index" json:"user_id"`
+	User      User      `gorm:"foreignKey:UserID" json:"-"`
+	Reason    string    `gorm:"type:text;not null" json:"reason"`
+	CreatedBy uint      `gorm:"not null" json:"created_by"` // Admin ID thực hiện cảnh báo
 }
 
 type Item struct {
@@ -75,4 +86,24 @@ type UserBidItemDTO struct {
 	UserMaxBid   float64 `json:"user_max_bid"`
 	IsWinning    bool    `json:"is_winning"`
 	Status       string  `json:"status"`
+}
+
+// DTO trả về danh sách Cảnh cáo trong Drawer
+type UserWarningDTO struct {
+	ID        uint      `json:"id"`
+	Reason    string    `json:"reason"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// DTO tổng hợp chi tiết User cho Drawer (Target 4)
+type UserSummaryDTO struct {
+	ID                  uint             `json:"id"`
+	FullName            string           `json:"full_name"`
+	Email               string           `json:"email"`
+	UserType            UserType         `json:"user_type"`
+	IsSuspicious        bool             `json:"is_suspicious"`
+	TotalSpent          float64          `json:"total_spent"`
+	WonAuctionsCount    int64            `json:"won_auctions_count"`
+	ActiveListingsCount int64            `json:"active_listings_count"`
+	Warnings            []UserWarningDTO `json:"warnings"`
 }

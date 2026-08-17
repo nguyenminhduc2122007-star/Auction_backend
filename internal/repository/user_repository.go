@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"auction-backend/internal/models"
 
 	"gorm.io/gorm"
@@ -52,6 +54,75 @@ func (r *UserRepository) GetAll() ([]models.User, error) {
 	return users, err
 }
 
+func (r *UserRepository) ListUsersFiltered(registered24h bool, isSuspicious bool, search string) ([]models.User, error) {
+	var users []models.User
+	query := r.db.Model(&models.User{})
+
+	if registered24h {
+		since := time.Now().Add(-24 * time.Hour)
+		query = query.Where("created_at >= ?", since)
+	}
+
+	if isSuspicious {
+		query = query.Where("is_suspicious = ?", true)
+	}
+
+	if search != "" {
+		likeTerm := "%" + search + "%"
+		query = query.Where("full_name LIKE ? OR email LIKE ?", likeTerm, likeTerm)
+	}
+
+	err := query.Order("id DESC").Find(&users).Error
+	return users, err
+}
+
+func (r *UserRepository) GetUserSummary(userID uint) (*models.UserSummaryDTO, error) {
+	var user models.User
+	if err := r.db.First(&user, userID).Error; err != nil {
+		return nil, err
+	}
+
+	var totalSpent float64
+	_ = r.db.Table("auctions").
+		Where("winner_id = ? AND status IN ('SUCCESS', 'ENDED', 'completed')", userID).
+		Select("COALESCE(SUM(current_price), 0)").
+		Scan(&totalSpent)
+
+	var wonCount int64
+	_ = r.db.Table("auctions").
+		Where("winner_id = ?", userID).
+		Count(&wonCount)
+
+	var activeListings int64
+	_ = r.db.Table("auctions").
+		Where("seller_id = ? AND status IN ('ACTIVE', 'active')", userID).
+		Count(&activeListings)
+
+	var warnings []models.UserWarning
+	_ = r.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&warnings)
+
+	warningDTOs := make([]models.UserWarningDTO, 0, len(warnings))
+	for _, w := range warnings {
+		warningDTOs = append(warningDTOs, models.UserWarningDTO{
+			ID:        w.ID,
+			Reason:    w.Reason,
+			CreatedAt: w.CreatedAt,
+		})
+	}
+
+	return &models.UserSummaryDTO{
+		ID:                  user.ID,
+		FullName:            user.FullName,
+		Email:               user.Email,
+		UserType:            user.UserType,
+		IsSuspicious:        user.IsSuspicious,
+		TotalSpent:          totalSpent,
+		WonAuctionsCount:    wonCount,
+		ActiveListingsCount: activeListings,
+		Warnings:            warningDTOs,
+	}, nil
+}
+
 func (r *UserRepository) UpdateRole(id uint, role models.UserType) (*models.User, error) {
 	var user models.User
 	if err := r.db.First(&user, id).Error; err != nil {
@@ -69,13 +140,9 @@ func (r *UserRepository) UpdateProfile(user *models.User) error {
 	return r.db.Save(user).Error
 }
 
-// --- F-005 SPECIFIC METHODS ---
-
-// GetUserBids - Lấy danh sách các phiên đấu giá người dùng đang tham gia bid
 func (r *UserRepository) GetUserBids(userID uint) ([]models.UserBidItemDTO, error) {
 	var results []models.UserBidItemDTO
 
-	// Subquery tìm max bid của user cho mỗi auction
 	query := `
 		SELECT 
 			a.id AS auction_id,
@@ -98,7 +165,6 @@ func (r *UserRepository) GetUserBids(userID uint) ([]models.UserBidItemDTO, erro
 	return results, err
 }
 
-// GetWonAuctions - Lấy danh sách các phiên người dùng đã thắng
 func (r *UserRepository) GetWonAuctions(userID uint) ([]models.Auction, error) {
 	var auctions []models.Auction
 	err := r.db.Where("winner_id = ?", userID).
@@ -109,21 +175,17 @@ func (r *UserRepository) GetWonAuctions(userID uint) ([]models.Auction, error) {
 	return auctions, err
 }
 
-// GetProfileStats - Lấy thông tin thống kê nhanh cho Header Profile
 func (r *UserRepository) GetProfileStats(userID uint) (participatingCount int64, wonCount int64, myAuctionCount int64, err error) {
-	// 1. Số phiên đang tham gia
 	err = r.db.Table("bids").Where("bidder_id = ?", userID).Select("COUNT(DISTINCT auction_id)").Count(&participatingCount).Error
 	if err != nil {
 		return
 	}
 
-	// 2. Số phiên đã thắng
 	err = r.db.Model(&models.Auction{}).Where("winner_id = ?", userID).Count(&wonCount).Error
 	if err != nil {
 		return
 	}
 
-	// 3. Số phiên đã/đang đăng bán
 	err = r.db.Model(&models.Auction{}).Where("seller_id = ?", userID).Count(&myAuctionCount).Error
 	return
 }

@@ -86,7 +86,7 @@ func registerRoutes(
 		auth.POST("/logout", authHandler.Logout)
 	}
 
-	// 2. User Profile Group (F-005) - ĐƯỢC BỔ SUNG
+	// 2. User Profile Group (F-005)
 	users := api.Group("/users")
 	users.Use(middleware.AuthMiddleware())
 	{
@@ -118,14 +118,18 @@ func registerRoutes(
 		auctions.GET("/:id/ws", wsHandler.ServeWS)
 	}
 
-	// 4. Admin Group
+	// 4. Admin Group (Target 4 Nâng Cấp)
 	admin := api.Group("/admin")
 	admin.Use(middleware.AuthMiddleware(), middleware.RequireAdmin())
 	{
 		admin.GET("/stats", auctionHandler.DashboardStats)
 		admin.GET("/dashboard/stats", auctionHandler.DashboardStats)
-		admin.GET("/users", userHandler.ListUsers)
+
+		// Target 4 Endpoints
+		admin.GET("/users", userHandler.ListUsers)                  // Query Params: ?registered_24h=true&is_suspicious=true&search=...
+		admin.GET("/users/:id/summary", userHandler.GetUserSummary) // Endpoint cho User Profile Drawer
 		admin.PUT("/users/:id/role", userHandler.UpdateUserRole)
+
 		admin.GET("/auctions", auctionHandler.AdminListAuctions)
 		admin.PATCH("/auctions/:id/approve", auctionHandler.ApproveAuction)
 		admin.PATCH("/auctions/:id/reject", auctionHandler.RejectAuction)

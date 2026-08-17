@@ -12,17 +12,24 @@ type UserService struct {
 	userRepo *repository.UserRepository
 }
 
-type UserListRow struct {
-	ID        uint            `json:"id"`
-	Email     string          `json:"email"`
-	FullName  string          `json:"full_name"`
-	UserType  models.UserType `json:"user_type"`
-	CreatedAt string          `json:"created_at"`
+type UserListRowExtended struct {
+	ID           uint            `json:"id"`
+	Email        string          `json:"email"`
+	FullName     string          `json:"full_name"`
+	UserType     models.UserType `json:"user_type"`
+	IsSuspicious bool            `json:"is_suspicious"`
+	CreatedAt    string          `json:"created_at"`
+}
+
+type UserListFilterInput struct {
+	Registered24h bool
+	IsSuspicious  bool
+	Search        string
 }
 
 type UserProfileResponse struct {
 	ID                 uint            `json:"id"`
-	Name               string          `json:"name"`
+	FullName           string          `json:"full_name"`
 	Email              string          `json:"email"`
 	Phone              string          `json:"phone"`
 	Address            string          `json:"address"`
@@ -43,24 +50,29 @@ func NewUserService(userRepo *repository.UserRepository) *UserService {
 	return &UserService{userRepo: userRepo}
 }
 
-func (s *UserService) ListUsers() ([]UserListRow, error) {
-	users, err := s.userRepo.GetAll()
+func (s *UserService) ListUsersFiltered(input UserListFilterInput) ([]UserListRowExtended, error) {
+	users, err := s.userRepo.ListUsersFiltered(input.Registered24h, input.IsSuspicious, input.Search)
 	if err != nil {
 		return nil, err
 	}
 
-	rows := make([]UserListRow, 0, len(users))
+	rows := make([]UserListRowExtended, 0, len(users))
 	for _, user := range users {
-		rows = append(rows, UserListRow{
-			ID:        user.ID,
-			Email:     user.Email,
-			FullName:  user.FullName,
-			UserType:  user.UserType,
-			CreatedAt: user.CreatedAt.Format("2006-01-02 15:04:05"),
+		rows = append(rows, UserListRowExtended{
+			ID:           user.ID,
+			Email:        user.Email,
+			FullName:     user.FullName,
+			UserType:     user.UserType,
+			IsSuspicious: user.IsSuspicious,
+			CreatedAt:    user.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}
 
 	return rows, nil
+}
+
+func (s *UserService) GetUserSummary(userID uint) (*models.UserSummaryDTO, error) {
+	return s.userRepo.GetUserSummary(userID)
 }
 
 func (s *UserService) UpdateUserRole(id uint, role string) (*models.User, error) {
@@ -106,8 +118,6 @@ func (s *UserService) UpdateUserRole(id uint, role string) (*models.User, error)
 	return s.userRepo.UpdateRole(id, targetRole)
 }
 
-// --- F-005 SERVICE METHODS ---
-
 func (s *UserService) GetProfile(userID uint) (*UserProfileResponse, error) {
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
@@ -121,7 +131,7 @@ func (s *UserService) GetProfile(userID uint) (*UserProfileResponse, error) {
 
 	return &UserProfileResponse{
 		ID:                 user.ID,
-		Name:               user.FullName,
+		FullName:           user.FullName,
 		Email:              user.Email,
 		Phone:              user.Phone,
 		Address:            user.ShippingAddress,

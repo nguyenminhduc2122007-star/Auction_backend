@@ -18,13 +18,39 @@ func NewUserHandler(userService *services.UserService) *UserHandler {
 }
 
 func (h *UserHandler) ListUsers(c *gin.Context) {
-	users, err := h.userService.ListUsers()
+	registered24h := c.Query("registered_24h") == "true"
+	isSuspicious := c.Query("is_suspicious") == "true"
+	search := c.Query("search")
+
+	input := services.UserListFilterInput{
+		Registered24h: registered24h,
+		IsSuspicious:  isSuspicious,
+		Search:        search,
+	}
+
+	users, err := h.userService.ListUsersFiltered(input)
 	if err != nil {
 		utils.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	utils.Success(c, http.StatusOK, "Lấy danh sách người dùng thành công", users)
+}
+
+func (h *UserHandler) GetUserSummary(c *gin.Context) {
+	id, err := utils.ParseUintID(c.Param("id"))
+	if err != nil {
+		utils.BadRequest(c, "ID người dùng không hợp lệ")
+		return
+	}
+
+	summary, err := h.userService.GetUserSummary(id)
+	if err != nil {
+		utils.Error(c, http.StatusNotFound, "Không tìm thấy thông tin tóm tắt người dùng")
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "Lấy tóm tắt người dùng thành công", summary)
 }
 
 type UpdateUserRoleRequest struct {
@@ -40,7 +66,8 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 
 	var req UpdateUserRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ")
+		// Trả về lỗi chi tiết thay vì thông báo chung chung
+		utils.BadRequest(c, "Dữ liệu yêu cầu không hợp lệ: "+err.Error())
 		return
 	}
 
@@ -52,8 +79,6 @@ func (h *UserHandler) UpdateUserRole(c *gin.Context) {
 
 	utils.Success(c, http.StatusOK, "Cập nhật vai trò thành công", user)
 }
-
-// --- F-005 HANDLERS ---
 
 func (h *UserHandler) GetProfile(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
@@ -78,7 +103,8 @@ func (h *UserHandler) UpdateProfile(c *gin.Context) {
 
 	var req services.UpdateProfileInput
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.BadRequest(c, "Dữ liệu cập nhật không hợp lệ")
+		// In ra chi tiết err.Error() để biết chính xác field nào bị lỗi JSON
+		utils.BadRequest(c, "Dữ liệu cập nhật không hợp lệ: "+err.Error())
 		return
 	}
 
