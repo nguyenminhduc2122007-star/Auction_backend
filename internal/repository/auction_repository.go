@@ -41,7 +41,6 @@ func (r *AuctionRepository) GetByID(id uint) (*models.Auction, error) {
 }
 
 // GetByIDForUpdate locks the auction row until the surrounding transaction ends.
-// Bids for the same auction must acquire this lock before calculating a minimum bid.
 func (r *AuctionRepository) GetByIDForUpdate(tx *gorm.DB, id uint) (*models.Auction, error) {
 	var auction models.Auction
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -66,12 +65,10 @@ func (r *AuctionRepository) UpdateAuctionInTx(tx *gorm.DB, auction *models.Aucti
 	return tx.Save(auction).Error
 }
 
-// UpdateStatus - Cập nhật trực tiếp cột status của auction theo ID
 func (r *AuctionRepository) UpdateStatus(id uint, status string) error {
 	return r.db.Model(&models.Auction{}).Where("id = ?", id).Update("status", status).Error
 }
 
-// ListAuctions lấy danh sách phiên đấu giá public
 func (r *AuctionRepository) ListAuctions(page, limit int, status string, categoryID uint) ([]models.Auction, int64, error) {
 	var auctions []models.Auction
 	var total int64
@@ -80,7 +77,7 @@ func (r *AuctionRepository) ListAuctions(page, limit int, status string, categor
 	if status != "" {
 		query = query.Where("status = ?", status)
 	} else {
-		query = query.Where("status IN ?", []models.AuctionStatus{models.AuctionStatusLive, models.AuctionStatusScheduled})
+		query = query.Where("status IN ?", []interface{}{models.AuctionStatusLive, models.AuctionStatusScheduled, "ACTIVE"})
 	}
 
 	if categoryID > 0 {
@@ -107,7 +104,6 @@ func (r *AuctionRepository) ListAuctions(page, limit int, status string, categor
 	return auctions, total, err
 }
 
-// AdminListAuctions lấy toàn bộ danh sách cho Admin quản lý
 func (r *AuctionRepository) AdminListAuctions(page, limit int) ([]models.Auction, int64, error) {
 	var auctions []models.Auction
 	var total int64
@@ -137,7 +133,9 @@ func (r *AuctionRepository) ListBySeller(sellerID uint, page, limit int, status 
 	var auctions []models.Auction
 	var total int64
 	query := r.db.Model(&models.Auction{}).Where("seller_id = ?", sellerID)
-	if status != "" { query = query.Where("status = ?", status) }
+	if status != "" && status != "ALL" {
+		query = query.Where("status = ?", status)
+	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
@@ -157,16 +155,19 @@ func (r *AuctionRepository) ListBidParticipations(userID uint) ([]models.Auction
 	return auctions, err
 }
 
-func (r *AuctionRepository) CountSellerAuctions(userID uint) (int64, error) { var count int64; err := r.db.Model(&models.Auction{}).Where("seller_id = ?", userID).Count(&count).Error; return count, err }
+func (r *AuctionRepository) CountSellerAuctions(userID uint) (int64, error) {
+	var count int64
+	err := r.db.Model(&models.Auction{}).Where("seller_id = ?", userID).Count(&count).Error
+	return count, err
+}
 
-// GetDashboardStats Thống kê dữ liệu tổng quan cho Admin Dashboard
 func (r *AuctionRepository) GetDashboardStats() (map[string]interface{}, error) {
 	var totalAuctions int64
 	var liveAuctions int64
 	var totalBids int64
 
 	r.db.Model(&models.Auction{}).Count(&totalAuctions)
-	r.db.Model(&models.Auction{}).Where("status = ?", models.AuctionStatusLive).Count(&liveAuctions)
+	r.db.Model(&models.Auction{}).Where("status IN ?", []interface{}{models.AuctionStatusLive, "ACTIVE"}).Count(&liveAuctions)
 	r.db.Model(&models.Bid{}).Count(&totalBids)
 
 	stats := map[string]interface{}{

@@ -10,34 +10,34 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RequireAdmin blocks requests where the JWT role is not admin
+// RequireAdmin kiểm tra xem người dùng thực hiện request có quyền Admin hay không
 func RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Thử lấy từ context key "role" hoặc "user_type"
+		// 1. Thử lấy giá trị vai trò từ context key "role" hoặc "user_type"
 		r, ok := c.Get("role")
 		if !ok {
 			r, ok = c.Get("user_type")
 		}
 
 		if !ok {
-			utils.Error(c, http.StatusUnauthorized, "unauthenticated: role not found in context")
+			utils.Error(c, http.StatusUnauthorized, "Thao tác thất bại: Không tìm thấy thông tin phân quyền")
 			c.Abort()
 			return
 		}
 
 		roleStr, ok := r.(string)
-		if !ok || roleStr == "" {
-			utils.Error(c, http.StatusUnauthorized, "unauthenticated: invalid role format")
+		if !ok || strings.TrimSpace(roleStr) == "" {
+			utils.Error(c, http.StatusUnauthorized, "Định dạng thông tin phân quyền không hợp lệ")
 			c.Abort()
 			return
 		}
 
-		// 2. So sánh không phân biệt hoa thường với Constant models.UserTypeAdmin
-		isAdmin := strings.EqualFold(roleStr, string(models.UserTypeAdmin)) || 
+		// 2. So sánh không phân biệt hoa thường với Constant UserTypeAdmin hoặc chuỗi "admin"
+		isAdmin := strings.EqualFold(roleStr, string(models.UserTypeAdmin)) ||
 			strings.EqualFold(roleStr, "admin")
 
 		if !isAdmin {
-			utils.Error(c, http.StatusForbidden, "forbidden: admin privileges required")
+			utils.Error(c, http.StatusForbidden, "Truy cập bị từ chối: Yêu cầu quyền Quản trị viên (Admin)")
 			c.Abort()
 			return
 		}

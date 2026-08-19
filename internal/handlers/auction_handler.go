@@ -27,9 +27,17 @@ type RejectAuctionInput struct {
 	Reason string `json:"reason"`
 }
 
+type CancelAuctionInput struct {
+	Reason string `json:"reason" binding:"required"`
+}
+
 type RelistAuctionInput struct {
 	StartAt time.Time `json:"start_at" binding:"required"`
 	EndAt   time.Time `json:"end_at" binding:"required"`
+}
+
+type PlaceBidInput struct {
+	Amount float64 `json:"amount" binding:"required,gt=0"`
 }
 
 // Helper lấy User ID từ Context sau khi qua Middleware Auth
@@ -57,6 +65,74 @@ func getUserIDFromContext(c *gin.Context) (uint, bool) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user context"})
 		return 0, false
 	}
+}
+
+// Helper trả về lỗi chuẩn cho HTTP Response
+func (h *AuctionHandler) writeAuctionError(c *gin.Context, err error) {
+	if err == services.ErrAuctionNotFound {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	if err == services.ErrUnauthorized {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+}
+
+// POST /api/auctions/:id/bids - Đặt giá đấu giá
+func (h *AuctionHandler) PlaceBid(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	idParam := c.Param("id")
+	auctionID, err := strconv.ParseUint(idParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID phiên đấu giá không hợp lệ"})
+		return
+	}
+
+	var input PlaceBidInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Số tiền đặt giá không hợp lệ"})
+		return
+	}
+
+	bid, extended, newEndAt, err := h.service.ProcessBid(uint(auctionID), userID, input.Amount)
+	if err != nil {
+		h.writeAuctionError(c, err)
+		return
+	}
+
+	// Broadcast cập nhật Realtime qua WebSocket cho tất cả người dùng đang xem
+	payload := gin.H{
+		"auction_id":    auctionID,
+		"bid_id":        bid.ID,
+		"bidder_id":     bid.BidderID,
+		"current_price": bid.Amount,
+		"created_at":    bid.CreatedAt,
+		"is_extended":   extended,
+	}
+	if extended && newEndAt != nil {
+		payload["new_end_at"] = newEndAt
+	}
+
+	Hub.Broadcast(uint(auctionID), WSMessage{
+		Event:   "bid:placed",
+		Payload: payload,
+	})
+
+	c.JSON(http.StatusCreated, gin.H{
+		"success": true,
+		"message": "Đặt giá thành công",
+		"data": gin.H{
+			"bid":         bid,
+			"is_extended": extended,
+			"new_end_at":  newEndAt,
+		},
+	})
 }
 
 // GET /api/auctions
@@ -99,11 +175,7 @@ func (h *AuctionHandler) GetAuctionDetail(c *gin.Context) {
 
 	auction, err := h.service.GetAuctionDetail(uint(auctionID))
 	if err != nil {
-		if err == services.ErrAuctionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		h.writeAuctionError(c, err)
 		return
 	}
 
@@ -135,15 +207,7 @@ func (h *AuctionHandler) UpdateStatus(c *gin.Context) {
 
 	err = h.service.UpdateStatus(userID, uint(auctionID), input.Status)
 	if err != nil {
-		if err == services.ErrAuctionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == services.ErrUnauthorized {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.writeAuctionError(c, err)
 		return
 	}
 
@@ -154,7 +218,7 @@ func (h *AuctionHandler) UpdateStatus(c *gin.Context) {
 	})
 }
 
-// PATCH /api/auctions/:id/approve
+// POST /api/admin/auctions/:id/approve
 func (h *AuctionHandler) ApproveAuction(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
@@ -170,21 +234,146 @@ func (h *AuctionHandler) ApproveAuction(c *gin.Context) {
 
 	err = h.service.ApproveAuction(userID, uint(auctionID))
 	if err != nil {
-		if err == services.ErrAuctionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == services.ErrUnauthorized {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.writeAuctionError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Phê duyệt phiên đấu giá thành công",
+	})
+}
+
+// POST /api/admin/auctions/:id/reject
+func (h *AuctionHandler) RejectAuction(c *gin.Context) {
+	userID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+	auctionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid auction ID"})
+		return
+	}
+	var input RejectAuctionInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid rejection payload"})
+		return
+	}
+	if err := h.service.RejectAuction(userID, uint(auctionID), input.Reason); err != nil {
+		h.writeAuctionError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Auction rejected"})
+}
+
+// POST /api/admin/auctions/:id/pause
+func (h *AuctionHandler) PauseAuction(c *gin.Context) {
+	adminID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	auctionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID phiên đấu giá không hợp lệ"})
+		return
+	}
+
+	if err := h.service.PauseAuction(adminID, uint(auctionID)); err != nil {
+		h.writeAuctionError(c, err)
+		return
+	}
+
+	Hub.Broadcast(uint(auctionID), WSMessage{
+		Event: "auction:status_changed",
+		Payload: gin.H{
+			"auction_id": auctionID,
+			"status":     models.AuctionStatusPaused,
+			"message":    "Phiên đấu giá vừa bị TẠM DỪNG bởi Quản trị viên",
+		},
+	})
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Đã tạm dừng phiên đấu giá thành công"})
+}
+
+// POST /api/admin/auctions/:id/resume
+func (h *AuctionHandler) ResumeAuction(c *gin.Context) {
+	adminID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	auctionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID phiên đấu giá không hợp lệ"})
+		return
+	}
+
+	if err := h.service.ResumeAuction(adminID, uint(auctionID)); err != nil {
+		h.writeAuctionError(c, err)
+		return
+	}
+
+	Hub.Broadcast(uint(auctionID), WSMessage{
+		Event: "auction:status_changed",
+		Payload: gin.H{
+			"auction_id": auctionID,
+			"status":     models.AuctionStatusLive,
+			"message":    "Phiên đấu giá đã được MỞ LẠI",
+		},
+	})
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Đã tiếp tục phiên đấu giá thành công"})
+}
+
+// POST /api/admin/auctions/:id/cancel
+func (h *AuctionHandler) CancelAuction(c *gin.Context) {
+	adminID, ok := getUserIDFromContext(c)
+	if !ok {
+		return
+	}
+
+	auctionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID phiên đấu giá không hợp lệ"})
+		return
+	}
+
+	var input CancelAuctionInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Vui lòng nhập lý do hủy phiên"})
+		return
+	}
+
+	if err := h.service.CancelAuction(adminID, uint(auctionID), input.Reason); err != nil {
+		h.writeAuctionError(c, err)
+		return
+	}
+
+	Hub.Broadcast(uint(auctionID), WSMessage{
+		Event: "auction:status_changed",
+		Payload: gin.H{
+			"auction_id": auctionID,
+			"status":     models.AuctionStatusCancelled,
+			"reason":     input.Reason,
+			"message":    "Phiên đấu giá đã bị HỦY bởi Quản trị viên",
+		},
+	})
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Đã hủy phiên đấu giá thành công"})
+}
+
+// POST /api/admin/auctions/close-expired - Triggers kích hoạt đóng phiên hết hạn thủ công
+func (h *AuctionHandler) TriggerCloseExpired(c *gin.Context) {
+	if err := h.service.CloseExpiredAuctions(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Đã quét và đóng các phiên đấu giá hết hạn thành công",
 	})
 }
 
@@ -204,15 +393,7 @@ func (h *AuctionHandler) DeleteAuction(c *gin.Context) {
 
 	err = h.service.DeleteAuction(userID, uint(auctionID))
 	if err != nil {
-		if err == services.ErrAuctionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == services.ErrUnauthorized {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.writeAuctionError(c, err)
 		return
 	}
 
@@ -222,7 +403,7 @@ func (h *AuctionHandler) DeleteAuction(c *gin.Context) {
 	})
 }
 
-// AdminListAuctions - Dành cho Admin quản lý
+// GET /api/admin/auctions
 func (h *AuctionHandler) AdminListAuctions(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
@@ -240,7 +421,7 @@ func (h *AuctionHandler) AdminListAuctions(c *gin.Context) {
 	})
 }
 
-// DashboardStats - Thống kê Admin
+// GET /api/admin/dashboard/stats
 func (h *AuctionHandler) DashboardStats(c *gin.Context) {
 	stats, err := h.service.GetDashboardStats()
 	if err != nil {
@@ -314,15 +495,7 @@ func (h *AuctionHandler) UpdateDraft(c *gin.Context) {
 
 	auction, err := h.service.UpdateDraft(userID, uint(auctionID), input)
 	if err != nil {
-		if err == services.ErrAuctionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == services.ErrUnauthorized {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.writeAuctionError(c, err)
 		return
 	}
 
@@ -351,15 +524,7 @@ func (h *AuctionHandler) UpdatePricing(c *gin.Context) {
 
 	pricing, err := h.service.UpdatePricing(userID, uint(auctionID), input)
 	if err != nil {
-		if err == services.ErrAuctionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == services.ErrUnauthorized {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.writeAuctionError(c, err)
 		return
 	}
 
@@ -382,15 +547,7 @@ func (h *AuctionHandler) GetDraftPreview(c *gin.Context) {
 
 	auction, err := h.service.GetDraftPreview(userID, uint(auctionID))
 	if err != nil {
-		if err == services.ErrAuctionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == services.ErrUnauthorized {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		h.writeAuctionError(c, err)
 		return
 	}
 
@@ -419,15 +576,7 @@ func (h *AuctionHandler) Publish(c *gin.Context) {
 
 	auction, err := h.service.PublishAuction(userID, uint(auctionID), input.StartAt, input.EndAt)
 	if err != nil {
-		if err == services.ErrAuctionNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-			return
-		}
-		if err == services.ErrUnauthorized {
-			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.writeAuctionError(c, err)
 		return
 	}
 
@@ -437,28 +586,7 @@ func (h *AuctionHandler) Publish(c *gin.Context) {
 	})
 }
 
-func (h *AuctionHandler) RejectAuction(c *gin.Context) {
-	userID, ok := getUserIDFromContext(c)
-	if !ok {
-		return
-	}
-	auctionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid auction ID"})
-		return
-	}
-	var input RejectAuctionInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid rejection payload"})
-		return
-	}
-	if err := h.service.RejectAuction(userID, uint(auctionID), input.Reason); err != nil {
-		h.writeAuctionError(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Auction rejected"})
-}
-
+// POST /api/auctions/:id/relist
 func (h *AuctionHandler) RelistAuction(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
@@ -482,6 +610,7 @@ func (h *AuctionHandler) RelistAuction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": auction})
 }
 
+// GET /api/seller/auctions
 func (h *AuctionHandler) ListMyAuctions(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
@@ -496,16 +625,4 @@ func (h *AuctionHandler) ListMyAuctions(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": auctions, "total": total, "page": page, "limit": limit})
-}
-
-func (h *AuctionHandler) writeAuctionError(c *gin.Context, err error) {
-	if err == services.ErrAuctionNotFound {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return
-	}
-	if err == services.ErrUnauthorized {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 }

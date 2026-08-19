@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	ErrAuctionNotFound     = errors.New("auction not found")
-	ErrUnauthorized        = errors.New("unauthorized action")
-	ErrInvalidAuctionState = errors.New("invalid auction state for action")
-	ErrBidTooLow           = errors.New("bid amount must be higher than current price plus increment")
+	ErrAuctionNotFound     = errors.New("không tìm thấy phiên đấu giá")
+	ErrUnauthorized        = errors.New("không có quyền thực hiện thao tác này")
+	ErrInvalidAuctionState = errors.New("trạng thái phiên đấu giá không hợp lệ")
+	ErrBidTooLow           = errors.New("số tiền đặt giá phải cao hơn giá hiện tại cộng với bước giá")
+	ErrSelfBidding         = errors.New("chủ phiên đấu giá không được phép tự đặt giá sản phẩm của mình")
 )
 
 type AuctionService struct {
@@ -83,14 +84,12 @@ func (s *AuctionService) GetAuctionDetail(id uint) (*models.Auction, error) {
 	return auction, nil
 }
 
-// UpdateStatus - Cập nhật trạng thái phiên đấu giá
 func (s *AuctionService) UpdateStatus(userID uint, auctionID uint, status string) error {
 	auction, err := s.repo.GetByID(auctionID)
 	if err != nil || auction == nil {
 		return ErrAuctionNotFound
 	}
 
-	// Kiểm tra nếu không phải chủ sở hữu thì phải là Admin
 	if auction.SellerID != userID {
 		user, err := s.repo.GetUserByID(userID)
 		if err != nil || !user.UserType.IsAdmin() {
@@ -101,7 +100,62 @@ func (s *AuctionService) UpdateStatus(userID uint, auctionID uint, status string
 	return s.repo.UpdateStatus(auctionID, status)
 }
 
-// ApproveAuction - Phê duyệt phiên đấu giá dành cho Admin
+func (s *AuctionService) PauseAuction(adminID uint, auctionID uint) error {
+	auction, err := s.repo.GetByID(auctionID)
+	if err != nil || auction == nil {
+		return ErrAuctionNotFound
+	}
+
+	user, err := s.repo.GetUserByID(adminID)
+	if err != nil || !user.UserType.IsAdmin() {
+		return ErrUnauthorized
+	}
+
+	if auction.Status != models.AuctionStatusLive && string(auction.Status) != "ACTIVE" {
+		return errors.New("chỉ có thể tạm dừng phiên đang diễn ra (LIVE / ACTIVE)")
+	}
+
+	return s.repo.UpdateStatus(auctionID, string(models.AuctionStatusPaused))
+}
+
+func (s *AuctionService) ResumeAuction(adminID uint, auctionID uint) error {
+	auction, err := s.repo.GetByID(auctionID)
+	if err != nil || auction == nil {
+		return ErrAuctionNotFound
+	}
+
+	user, err := s.repo.GetUserByID(adminID)
+	if err != nil || !user.UserType.IsAdmin() {
+		return ErrUnauthorized
+	}
+
+	if auction.Status != models.AuctionStatusPaused {
+		return errors.New("chỉ có thể tiếp tục phiên đang bị tạm dừng (PAUSED)")
+	}
+
+	return s.repo.UpdateStatus(auctionID, string(models.AuctionStatusLive))
+}
+
+func (s *AuctionService) CancelAuction(adminID uint, auctionID uint, reason string) error {
+	auction, err := s.repo.GetByID(auctionID)
+	if err != nil || auction == nil {
+		return ErrAuctionNotFound
+	}
+
+	user, err := s.repo.GetUserByID(adminID)
+	if err != nil || !user.UserType.IsAdmin() {
+		return ErrUnauthorized
+	}
+
+	if auction.Status == models.AuctionStatusEnded || auction.Status == models.AuctionStatusCancelled {
+		return errors.New("phiên đấu giá đã kết thúc hoặc đã hủy từ trước")
+	}
+
+	auction.Status = models.AuctionStatusCancelled
+	auction.RejectionReason = reason
+	return s.repo.UpdateAuction(auction)
+}
+
 func (s *AuctionService) ApproveAuction(userID uint, auctionID uint) error {
 	auction, err := s.repo.GetByID(auctionID)
 	if err != nil || auction == nil {
@@ -117,10 +171,10 @@ func (s *AuctionService) ApproveAuction(userID uint, auctionID uint) error {
 		return ErrInvalidAuctionState
 	}
 	if auction.StartAt == nil || auction.EndAt == nil || !auction.EndAt.After(*auction.StartAt) {
-		return errors.New("auction must have a valid schedule before approval")
+		return errors.New("phiên đấu giá phải có thời gian bắt đầu/kết thúc hợp lệ trước khi phê duyệt")
 	}
 	if !auction.EndAt.After(time.Now()) {
-		return errors.New("auction end time must be in the future")
+		return errors.New("thời gian kết thúc phải nằm trong tương lai")
 	}
 	if auction.StartAt.After(time.Now()) {
 		auction.Status = models.AuctionStatusScheduled
@@ -149,10 +203,10 @@ func (s *AuctionService) RejectAuction(userID, auctionID uint, reason string) er
 
 func (s *AuctionService) RelistAuction(sellerID, auctionID uint, startAt, endAt time.Time) (*models.Auction, error) {
 	if !endAt.After(startAt) {
-		return nil, errors.New("end time must be after start time")
+		return nil, errors.New("thời gian kết thúc phải sau thời gian bắt đầu")
 	}
 	if !startAt.After(time.Now()) {
-		return nil, errors.New("start time must be in the future")
+		return nil, errors.New("thời gian bắt đầu phải ở tương lai")
 	}
 	var result *models.Auction
 	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
@@ -163,7 +217,10 @@ func (s *AuctionService) RelistAuction(sellerID, auctionID uint, startAt, endAt 
 		if auction.SellerID != sellerID {
 			return ErrUnauthorized
 		}
-		if auction.Status != models.AuctionStatusEnded || auction.SaleStatus != "UNSOLD" {
+		// Cho phép Relist khi phiên ở trạng thái ENDED, CANCELLED hoặc FAILED
+		if auction.Status != models.AuctionStatusEnded &&
+			auction.Status != models.AuctionStatusCancelled &&
+			auction.Status != models.AuctionStatusFailed {
 			return ErrInvalidAuctionState
 		}
 		if err := tx.Where("auction_id = ?", auctionID).Delete(&models.Bid{}).Error; err != nil {
@@ -185,7 +242,148 @@ func (s *AuctionService) RelistAuction(sellerID, auctionID uint, startAt, endAt 
 	return result, nil
 }
 
-// SaveDraftInput - DTO mở rộng hỗ trợ nhận trọn vẹn dữ liệu từ Form Wizard Frontend
+// CloseExpiredAuctions tự động đóng các phiên đấu giá đã quá hạn (Dùng cho Cron Job hoặc Worker)
+func (s *AuctionService) CloseExpiredAuctions() error {
+	now := time.Now()
+
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		var expiredAuctions []models.Auction
+
+		// Tìm các phiên đấu giá đang LIVE/ACTIVE nhưng đã quá EndAt
+		err := tx.Where("status IN ? AND end_at IS NOT NULL AND end_at <= ?", []interface{}{models.AuctionStatusLive, "ACTIVE"}, now).
+			Find(&expiredAuctions).Error
+		if err != nil {
+			return err
+		}
+
+		for _, auction := range expiredAuctions {
+			highestBid, err := s.repo.GetHighestBidInTx(tx, auction.ID)
+			if err != nil {
+				continue
+			}
+
+			if highestBid == nil {
+				// Không có lượt đặt giá -> Phiên đấu giá thất bại (FAILED)
+				auction.Status = models.AuctionStatusFailed
+				auction.SaleStatus = "UNSOLD"
+			} else {
+				// Có người đặt giá -> Đấu giá thành công (ENDED)
+				auction.Status = models.AuctionStatusEnded
+				auction.SaleStatus = "SOLD"
+				auction.WinnerID = &highestBid.BidderID
+				auction.WinningBidID = &highestBid.ID
+				auction.WinningAmount = &highestBid.Amount
+			}
+
+			if err := s.repo.UpdateAuctionInTx(tx, &auction); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+// XỬ LÝ ĐẶT GIÁ AN TOÀN (TRANSACTION + PESSIMISTIC LOCKING + ANTI-SNIPE)
+func (s *AuctionService) ProcessBid(auctionID uint, bidderID uint, amount float64) (*models.Bid, bool, *time.Time, error) {
+	var (
+		resultBid *models.Bid
+		extended  bool
+		newEndAt  *time.Time
+	)
+
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		// 1. Lock dòng record phiên đấu giá trong DB (Pessimistic Locking FOR UPDATE)
+		auction, err := s.repo.GetByIDForUpdate(tx, auctionID)
+		if err != nil || auction == nil {
+			return ErrAuctionNotFound
+		}
+
+		// 2. Chặn chủ hàng tự bid sản phẩm của chính mình
+		if auction.SellerID == bidderID {
+			return ErrSelfBidding
+		}
+
+		// 3. Kiểm tra trạng thái (Hỗ trợ cả 'LIVE' lẫn 'ACTIVE')
+		if auction.Status != models.AuctionStatusLive && string(auction.Status) != "ACTIVE" {
+			return errors.New("phiên đấu giá hiện không ở trạng thái LIVE hoặc ACTIVE")
+		}
+
+		now := time.Now()
+		if auction.StartAt != nil && now.Before(*auction.StartAt) {
+			return errors.New("phiên đấu giá chưa đến thời gian bắt đầu")
+		}
+		if auction.EndAt != nil && !now.Before(*auction.EndAt) {
+			return errors.New("phiên đấu giá đã kết thúc")
+		}
+
+		// 4. Lấy lượt bid cao nhất hiện tại trong Transaction
+		highestBid, err := s.repo.GetHighestBidInTx(tx, auctionID)
+		if err != nil {
+			return err
+		}
+
+		var minAllowed float64
+		bidType := models.BidTypeCompetingBid
+
+		if highestBid == nil {
+			if auction.Pricing != nil {
+				minAllowed = auction.Pricing.StartingBid
+			}
+			bidType = models.BidTypeStartingBid
+		} else {
+			minAllowed = highestBid.Amount
+			if auction.Pricing != nil {
+				minAllowed += auction.Pricing.BidIncrement
+			}
+		}
+
+		if amount < minAllowed {
+			return ErrBidTooLow
+		}
+
+		// 5. Tạo lượt bid mới
+		bid := &models.Bid{
+			AuctionID: auctionID,
+			BidderID:  bidderID,
+			Amount:    amount,
+			BidType:   bidType,
+		}
+		if err := s.repo.CreateBidInTx(tx, bid); err != nil {
+			return err
+		}
+
+		// 6. Cập nhật CurrentPrice trực tiếp vào bảng auctions
+		auction.CurrentPrice = amount
+
+		// 7. Xử lý Kích hoạt Anti-Snipe (Gia hạn thời gian)
+		if auction.Pricing != nil && auction.Pricing.AntiSnipeEnabled && auction.EndAt != nil {
+			triggerWindow := time.Duration(auction.Pricing.AntiSnipeTriggerMinutes) * time.Minute
+			extendDuration := time.Duration(auction.Pricing.AntiSnipeExtendMinutes) * time.Minute
+
+			if now.Add(triggerWindow).Compare(*auction.EndAt) >= 0 {
+				updatedTime := auction.EndAt.Add(extendDuration)
+				auction.EndAt = &updatedTime
+				extended = true
+				newEndAt = &updatedTime
+			}
+		}
+
+		if err := s.repo.UpdateAuctionInTx(tx, auction); err != nil {
+			return err
+		}
+
+		resultBid = bid
+		return nil
+	})
+
+	if err != nil {
+		return nil, false, nil, err
+	}
+
+	return resultBid, extended, newEndAt, nil
+}
+
 type SaveDraftInput struct {
 	Title         string  `json:"title"`
 	Description   string  `json:"description"`
@@ -196,7 +394,6 @@ type SaveDraftInput struct {
 	PackageWeight float64 `json:"package_weight"`
 	ReturnPolicy  string  `json:"return_policy"`
 
-	// Nhận đồng thời các alias giá tiền & bước giá
 	StartingBid float64 `json:"starting_bid"`
 	StartPrice  float64 `json:"start_price"`
 	Price       float64 `json:"price"`
@@ -208,7 +405,6 @@ type SaveDraftInput struct {
 	ReservePrice float64 `json:"reserve_price"`
 }
 
-// GetStartingBid - Trích xuất Giá khởi điểm chuẩn từ các trường Alias
 func (input *SaveDraftInput) GetStartingBid() float64 {
 	if input.StartingBid > 0 {
 		return input.StartingBid
@@ -219,7 +415,6 @@ func (input *SaveDraftInput) GetStartingBid() float64 {
 	return input.Price
 }
 
-// GetBidIncrement - Trích xuất Bước giá chuẩn từ các trường Alias
 func (input *SaveDraftInput) GetBidIncrement() float64 {
 	if input.BidIncrement > 0 {
 		return input.BidIncrement
@@ -242,7 +437,6 @@ func (s *AuctionService) CreateDraft(sellerID uint, input SaveDraftInput) (*mode
 			return err
 		}
 
-		// 1. Lưu thông tin Thanh toán / Vận chuyển
 		if input.PaymentTerms != "" || input.ShippingPayer != "" || input.PackageWeight > 0 || input.ReturnPolicy != "" {
 			sp := &models.AuctionShippingPayment{
 				AuctionID:        auction.ID,
@@ -256,7 +450,6 @@ func (s *AuctionService) CreateDraft(sellerID uint, input SaveDraftInput) (*mode
 			}
 		}
 
-		// 2. Lưu Giá khởi điểm & Bước giá (Nếu có truyền lên)
 		startBid := input.GetStartingBid()
 		bidInc := input.GetBidIncrement()
 		if startBid > 0 {
@@ -271,14 +464,12 @@ func (s *AuctionService) CreateDraft(sellerID uint, input SaveDraftInput) (*mode
 				return err
 			}
 		}
-
 		return nil
 	})
 
 	if err != nil {
 		return nil, err
 	}
-
 	return s.repo.GetByID(auction.ID)
 }
 
@@ -304,7 +495,6 @@ func (s *AuctionService) UpdateDraft(sellerID uint, auctionID uint, input SaveDr
 			return err
 		}
 
-		// 1. Cập nhật Shipping & Payment
 		sp := &models.AuctionShippingPayment{
 			AuctionID:        auction.ID,
 			PaymentTerms:     input.PaymentTerms,
@@ -316,7 +506,6 @@ func (s *AuctionService) UpdateDraft(sellerID uint, auctionID uint, input SaveDr
 			return err
 		}
 
-		// 2. Cập nhật Pricing (Giá tiền & Bước giá)
 		startBid := input.GetStartingBid()
 		bidInc := input.GetBidIncrement()
 		if startBid > 0 {
@@ -331,14 +520,12 @@ func (s *AuctionService) UpdateDraft(sellerID uint, auctionID uint, input SaveDr
 				return err
 			}
 		}
-
 		return nil
 	})
 
 	if err != nil {
 		return nil, err
 	}
-
 	return s.repo.GetByID(auction.ID)
 }
 
@@ -422,13 +609,11 @@ func (s *AuctionService) PublishAuction(sellerID uint, auctionID uint, startAt, 
 	if endAt.Before(now) {
 		return nil, errors.New("end time cannot be in the past")
 	}
-
 	if auction.Pricing == nil || auction.Pricing.StartingBid <= 0 {
 		return nil, errors.New("auction pricing must be configured before publishing")
 	}
 
 	auction.Status = models.AuctionStatusPendingApproval
-
 	auction.StartAt = &startAt
 	auction.EndAt = &endAt
 
@@ -436,88 +621,6 @@ func (s *AuctionService) PublishAuction(sellerID uint, auctionID uint, startAt, 
 		return nil, err
 	}
 	return auction, nil
-}
-
-func (s *AuctionService) ProcessBid(auctionID uint, bidderID uint, amount float64) (*models.Bid, bool, *time.Time, error) {
-	var (
-		resultBid *models.Bid
-		extended  bool
-		newEndAt  *time.Time
-	)
-
-	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
-		// Lock the auction before reading its bids so concurrent bids for the same
-		// auction are validated in serial order.
-		auction, err := s.repo.GetByIDForUpdate(tx, auctionID)
-		if err != nil || auction == nil {
-			return ErrAuctionNotFound
-		}
-
-		now := time.Now()
-		if auction.Status != models.AuctionStatusLive {
-			return errors.New("auction is not live")
-		}
-		if auction.EndAt != nil && !now.Before(*auction.EndAt) {
-			return errors.New("auction has ended")
-		}
-
-		highestBid, err := s.repo.GetHighestBidInTx(tx, auctionID)
-		if err != nil {
-			return err
-		}
-
-		var minAllowed float64
-		bidType := models.BidTypeCompetingBid
-
-		if highestBid == nil {
-			if auction.Pricing != nil {
-				minAllowed = auction.Pricing.StartingBid
-			}
-			bidType = models.BidTypeStartingBid
-		} else {
-			minAllowed = highestBid.Amount
-			if auction.Pricing != nil {
-				minAllowed += auction.Pricing.BidIncrement
-			}
-		}
-
-		if amount < minAllowed {
-			return ErrBidTooLow
-		}
-
-		bid := &models.Bid{
-			AuctionID: auctionID,
-			BidderID:  bidderID,
-			Amount:    amount,
-			BidType:   bidType,
-		}
-		if err := s.repo.CreateBidInTx(tx, bid); err != nil {
-			return err
-		}
-
-		if auction.Pricing != nil && auction.Pricing.AntiSnipeEnabled && auction.EndAt != nil {
-			triggerWindow := time.Duration(auction.Pricing.AntiSnipeTriggerMinutes) * time.Minute
-			extendDuration := time.Duration(auction.Pricing.AntiSnipeExtendMinutes) * time.Minute
-
-			if now.Add(triggerWindow).Compare(*auction.EndAt) >= 0 {
-				updatedTime := auction.EndAt.Add(extendDuration)
-				auction.EndAt = &updatedTime
-				if err := s.repo.UpdateAuctionInTx(tx, auction); err != nil {
-					return err
-				}
-				extended = true
-				newEndAt = &updatedTime
-			}
-		}
-
-		resultBid = bid
-		return nil
-	})
-	if err != nil {
-		return nil, false, nil, err
-	}
-
-	return resultBid, extended, newEndAt, nil
 }
 
 func (s *AuctionService) DeleteAuction(sellerID uint, auctionID uint) error {
