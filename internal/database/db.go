@@ -47,7 +47,6 @@ func InitDB() error {
 func MigrateModels() error {
 	if err := DB.AutoMigrate(
 		&models.User{},
-		&models.Item{},
 		&models.Auction{},
 		&models.AuctionPricing{},
 		&models.AuctionShippingPayment{},

@@ -73,6 +73,7 @@ func (r *AuctionRepository) ListAuctions(page, limit int, status string, categor
 	var auctions []models.Auction
 	var total int64
 
+	// GORM tự động lọc WHERE deleted_at IS NULL khi gọi Model(&models.Auction{})
 	query := r.db.Model(&models.Auction{})
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -249,4 +250,20 @@ func (r *AuctionRepository) GetUserByID(userID uint) (*models.User, error) {
 		return nil, errors.New("user not found")
 	}
 	return &user, err
+}
+
+// SoftDeleteAuction thực hiện xóa mềm an toàn cho cả phiên đấu giá lẫn dữ liệu phụ liên quan
+func (r *AuctionRepository) SoftDeleteAuction(tx *gorm.DB, auctionID uint) error {
+	db := r.db
+	if tx != nil {
+		db = tx
+	}
+
+	if err := db.Where("auction_id = ?", auctionID).Delete(&models.AuctionPricing{}).Error; err != nil {
+		return err
+	}
+	if err := db.Where("auction_id = ?", auctionID).Delete(&models.AuctionShippingPayment{}).Error; err != nil {
+		return err
+	}
+	return db.Delete(&models.Auction{}, auctionID).Error
 }

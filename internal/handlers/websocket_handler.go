@@ -160,6 +160,7 @@ func (c *Client) ReadPump(auctionService *services.AuctionService) {
 	type IncomingRequest struct {
 		Event   string          `json:"event"`
 		Payload json.RawMessage `json:"payload"`
+		Data    json.RawMessage `json:"data"`
 	}
 
 	for {
@@ -187,7 +188,11 @@ func (c *Client) ReadPump(auctionService *services.AuctionService) {
 			var bidPayload struct {
 				Amount float64 `json:"amount"`
 			}
-			if err := json.Unmarshal(req.Payload, &bidPayload); err != nil || bidPayload.Amount <= 0 {
+			rawPayload := req.Payload
+			if len(rawPayload) == 0 {
+				rawPayload = req.Data
+			}
+			if err := json.Unmarshal(rawPayload, &bidPayload); err != nil || bidPayload.Amount <= 0 {
 				c.Send <- WSMessage{Event: "bid_error", Payload: "Số tiền đặt giá không hợp lệ"}
 				continue
 			}
@@ -199,16 +204,16 @@ func (c *Client) ReadPump(auctionService *services.AuctionService) {
 				continue
 			}
 
-			// Broadcast sự kiện bid:placed tới TẤT CẢ người xem trong room
 			Hub.Broadcast(c.AuctionID, WSMessage{
-				Event: "bid:placed",
+				Event: "new_bid",
 				Payload: gin.H{
-					"id":         bid.ID,
-					"auction_id": bid.AuctionID,
-					"bidder_id":  bid.BidderID,
-					"amount":     bid.Amount,
-					"bid_type":   bid.BidType,
-					"created_at": bid.CreatedAt,
+					"id":            bid.ID,
+					"auction_id":    bid.AuctionID,
+					"bidder_id":     bid.BidderID,
+					"amount":        bid.Amount,
+					"current_price": bid.Amount,
+					"bid_type":      bid.BidType,
+					"created_at":    bid.CreatedAt,
 				},
 			})
 

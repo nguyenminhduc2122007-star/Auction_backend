@@ -60,24 +60,6 @@ type UserWarning struct {
 	CreatedBy uint      `gorm:"not null" json:"created_by"` // Admin ID thực hiện cảnh báo
 }
 
-type Item struct {
-	ID           uint           `gorm:"primaryKey;autoIncrement" json:"id"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
-	Title        string         `gorm:"type:varchar(255);not null" json:"title"`
-	Category     string         `gorm:"type:varchar(100);not null;default:General" json:"category"`
-	Status       string         `gorm:"type:varchar(50);not null;default:pending;index" json:"status"`
-	Price        float64        `gorm:"type:decimal(12,2);not null;default:0" json:"price"`
-	Description  string         `gorm:"type:text" json:"description"`
-	StartPrice   float64        `gorm:"type:decimal(12,2);not null;default:0" json:"start_price"`
-	CurrentPrice float64        `gorm:"type:decimal(12,2);not null;default:0" json:"current_price"`
-	BidStep      float64        `gorm:"type:decimal(12,2);not null;default:0" json:"bid_step"`
-	SellerID     uint           `gorm:"not null;index" json:"seller_id"`
-	Seller       User           `gorm:"foreignKey:SellerID" json:"-"`
-	UserID       uint           `gorm:"not null;default:0" json:"user_id"`
-}
-
 // DTO cho F-005 (Trả về thông tin chi tiết Tab Đang đặt giá)
 type UserBidItemDTO struct {
 	AuctionID    uint    `json:"auction_id"`

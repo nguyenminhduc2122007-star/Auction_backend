@@ -10,7 +10,7 @@ require (
 	golang.org/x/crypto v0.52.0
 	golang.org/x/time v0.15.0
 	gorm.io/driver/mysql v1.6.0
-	gorm.io/gorm v1.31.1
+	gorm.io/gorm v1.31.2
 )
 
 require (
@@ -44,6 +44,6 @@ require (
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )

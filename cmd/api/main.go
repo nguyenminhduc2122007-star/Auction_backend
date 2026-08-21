@@ -140,6 +140,7 @@ func registerRoutes(
 		admin.GET("/auctions", auctionHandler.AdminListAuctions)
 		admin.PATCH("/auctions/:id/approve", auctionHandler.ApproveAuction)
 		admin.PATCH("/auctions/:id/reject", auctionHandler.RejectAuction)
+		admin.PATCH("/auctions/:id/status", auctionHandler.UpdateStatus)
 
 		// 🟢 BƯỚC 4: Các Route Admin điều khiển phiên đấu giá
 		admin.POST("/auctions/:id/pause", auctionHandler.PauseAuction)

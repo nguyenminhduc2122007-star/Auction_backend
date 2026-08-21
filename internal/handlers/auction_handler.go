@@ -40,7 +40,6 @@ type PlaceBidInput struct {
 	Amount float64 `json:"amount" binding:"required,gt=0"`
 }
 
-// Helper lấy User ID từ Context sau khi qua Middleware Auth
 func getUserIDFromContext(c *gin.Context) (uint, bool) {
 	val, exists := c.Get("user_id")
 	if !exists {
@@ -67,7 +66,6 @@ func getUserIDFromContext(c *gin.Context) (uint, bool) {
 	}
 }
 
-// Helper trả về lỗi chuẩn cho HTTP Response
 func (h *AuctionHandler) writeAuctionError(c *gin.Context, err error) {
 	if err == services.ErrAuctionNotFound {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -80,7 +78,7 @@ func (h *AuctionHandler) writeAuctionError(c *gin.Context, err error) {
 	c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 }
 
-// POST /api/auctions/:id/bids - Đặt giá đấu giá
+// POST /api/auctions/:id/bids
 func (h *AuctionHandler) PlaceBid(c *gin.Context) {
 	userID, ok := getUserIDFromContext(c)
 	if !ok {
@@ -106,7 +104,6 @@ func (h *AuctionHandler) PlaceBid(c *gin.Context) {
 		return
 	}
 
-	// Broadcast cập nhật Realtime qua WebSocket cho tất cả người dùng đang xem
 	payload := gin.H{
 		"auction_id":    auctionID,
 		"bid_id":        bid.ID,
@@ -364,7 +361,7 @@ func (h *AuctionHandler) CancelAuction(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Đã hủy phiên đấu giá thành công"})
 }
 
-// POST /api/admin/auctions/close-expired - Triggers kích hoạt đóng phiên hết hạn thủ công
+// POST /api/admin/auctions/close-expired
 func (h *AuctionHandler) TriggerCloseExpired(c *gin.Context) {
 	if err := h.service.CloseExpiredAuctions(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

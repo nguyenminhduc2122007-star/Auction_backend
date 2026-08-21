@@ -37,6 +37,11 @@ type Auction struct {
 	ImageURL    string        `gorm:"type:text" json:"image_url,omitempty"`
 	Status      AuctionStatus `gorm:"type:varchar(32);default:'DRAFT';index" json:"status"`
 
+	ConditionStatus  string `gorm:"type:varchar(255)" json:"condition_status,omitempty"`
+	Provenance       string `gorm:"type:varchar(255)" json:"provenance,omitempty"`
+	AuthenticityCert string `gorm:"type:varchar(255)" json:"authenticity_cert,omitempty"`
+	Specifications   string `gorm:"type:json" json:"specifications,omitempty"`
+
 	StartAt *time.Time `json:"start_at,omitempty"`
 	EndAt   *time.Time `json:"end_at,omitempty"`
 
